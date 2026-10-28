@@ -1,8 +1,6 @@
 {
   "title": "Design Exploration Canvas",
   "description": "Infinite canvas and artboard explorer for HTML designs and components",
-  "columns": 3,
-  "gap": 48,
   "sections": [
     {
       "id": "screens",

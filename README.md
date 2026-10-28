@@ -31,6 +31,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 📐 **Declarative Manifest (`designs.json`)**: Optional structured schema to organize artboards into sections, define custom viewports (iPhone, iPad, MacBook, 4K), and attach metadata.
 - 📱 **Multi-Device Categories**: One-click filters for Mobile (390×844), Desktop (1280×820), Tablet (768×1024), and Component kits.
 - 🎯 **Focus & Zoom-to-Fit**: Instantly center any artboard with a click in the sidebar, or hit <kbd>F</kbd> to fit all designs on screen.
+- 🔗 **Deep Links**: The URL follows the focused artboard (`http://localhost:3000/#checkout-b`), so you can share or reload a view of one design.
 - ⌨️ **Keyboard-First Workflow**: Full suite of intuitive shortcuts matching design industry standards.
 
 ---

@@ -91,5 +91,5 @@ When the project already has a `designs.json`, add every new file to it.
 ## Working with the user
 
 - Put variants in separate files next to each other (`hero-a.html`, `hero-b.html`) instead of overwriting the current design, so they can be compared on the canvas. Keep the current one as the reference until the user picks.
-- Say which files you created or changed and what to look at; the user is watching the canvas, not the code.
+- Say which files you created or changed and what to look at; the user is watching the canvas, not the code. Link straight to an artboard with `http://localhost:3000/#<id>` (the id is the file's path without `.html`, slashes and other symbols turned into `-`: `checkout/b.html` → `checkout-b`).
 - If you can browse or take screenshots, open the artboard directly (`http://localhost:3000/<file>`) to check it at its real size before reporting back. Fix overflow, clipped text and broken images first.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startServer, normalizeManifest, loadDesignsManifest, inferCategory } from '../src/index.js';
+import { startServer, normalizeManifest, loadDesignsManifest, discoverDesigns, inferCategory } from '../src/index.js';
 
 describe('Manifest short form and --root', () => {
   let root;
@@ -49,6 +49,15 @@ describe('Manifest short form and --root', () => {
     assert.equal(inferCategory('ui/buttons.html'), 'components');
     assert.equal(inferCategory('flyer.html', 1080), 'desktop');
     assert.equal(inferCategory('card.html', 390), 'mobile');
+  });
+
+  test('discovered artboards get the same slug ids as manifest ones', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'htmlboard-ids-'));
+    fs.mkdirSync(path.join(dir, 'Checkout'));
+    fs.writeFileSync(path.join(dir, 'Checkout', 'Variant B.html'), '<title>B</title>');
+    const ids = discoverDesigns(dir).sections.flatMap((s) => s.artboards.map((b) => b.id));
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.deepEqual(ids, ['checkout-variant-b']);
   });
 
   test('files are given relative to the root', () => {

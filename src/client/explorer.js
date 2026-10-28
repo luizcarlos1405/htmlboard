@@ -104,6 +104,12 @@ class HtmlBoardExplorer {
 
     // Keyboard Shortcuts
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
+
+    // Deep links: #<artboard id> focuses that artboard
+    window.addEventListener('hashchange', () => {
+      const id = this.artboardIdFromHash();
+      if (id && id !== this.activeArtboardId) this.focusArtboard(id);
+    });
     window.addEventListener('keyup', (e) => this.onKeyUp(e));
   }
 
@@ -157,6 +163,8 @@ class HtmlBoardExplorer {
     const visibleCards = this.content.querySelectorAll('.artboard-frame');
     if (!visibleCards || visibleCards.length === 0) return;
 
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const viewportRect = this.viewport.getBoundingClientRect();
 
@@ -195,10 +203,18 @@ class HtmlBoardExplorer {
     this.applyTransform();
   }
 
+  artboardIdFromHash() {
+    const id = decodeURIComponent(location.hash.slice(1));
+    return id && this.artboards.some((board) => board.id === id) ? id : null;
+  }
+
   focusArtboard(artboardId) {
     this.activeArtboardId = artboardId;
     const frame = document.getElementById(`frame-${artboardId}`);
     if (!frame) return;
+
+    // Keep the URL pointing at the focused artboard, so it can be shared or reloaded
+    history.replaceState(null, '', `#${encodeURIComponent(artboardId)}`);
 
     // Highlight active card
     document.querySelectorAll('.artboard-frame').forEach((f) => f.classList.remove('focused'));
@@ -360,10 +376,15 @@ class HtmlBoardExplorer {
       this.renderSidebar();
       this.renderCanvas();
 
-      // Fit after the first layout only, so a rebuild keeps the user's pan and zoom
+      // Place the view after the first layout only, so a rebuild keeps the user's pan and zoom:
+      // on the artboard named in the URL (#<id>), else on everything
       if (!this.hasFitted) {
         this.hasFitted = true;
-        setTimeout(() => this.fitAll(), 150);
+        setTimeout(() => {
+          const id = this.artboardIdFromHash();
+          if (id) this.focusArtboard(id);
+          else this.fitAll();
+        }, 150);
       }
     } catch (err) {
       console.error('Failed loading designs manifest:', err);

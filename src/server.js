@@ -132,7 +132,7 @@ export function discoverDesigns(baseDir) {
         const sectionName = relativePath ? relativePath.replace(/[\\/]/g, ' / ') : 'Root Designs';
 
         artboards.push({
-          id: relPath.replace(/[\\/]/g, '-').replace(/\.html$/i, ''),
+          id: slugify(relPath.replace(/\.html$/i, '')),
           title,
           file: relPath.replace(/\\/g, '/'),
           category,
