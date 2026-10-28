@@ -77,6 +77,34 @@ describe('Manifest short form and --root', () => {
     assert.notEqual(res.status, 200);
   });
 
+  test('live reload reports every file saved in the same burst', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`${instance.url}/api/events`, { signal: controller.signal });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    const read = async (until) => {
+      const deadline = Date.now() + 3000;
+      while (!until(text) && Date.now() < deadline) {
+        const { value, done } = await Promise.race([
+          reader.read(),
+          new Promise((resolve) => setTimeout(() => resolve({ value: undefined, done: false }), 200))
+        ]);
+        if (done) break;
+        if (value) text += decoder.decode(value, { stream: true });
+      }
+    };
+
+    await read((t) => t.includes('event: connected'));
+    fs.writeFileSync(path.join(root, 'css', 'theme.css'), 'body { color: blue; }');
+    fs.writeFileSync(path.join(root, 'design', 'home.html'), '<link rel="stylesheet" href="../css/theme.css"><main>Home 2</main>');
+    await read((t) => t.includes('"css/theme.css"') && t.includes('"design/home.html"'));
+    controller.abort();
+
+    assert.match(text, /"file":"css\/theme.css","isHtml":false/);
+    assert.match(text, /"file":"design\/home.html","isHtml":true/);
+  });
+
   test('the designs folder must be inside the root', async () => {
     await assert.rejects(startServer({ dir: os.tmpdir(), root, port: 3941 }), /must be inside the root/);
   });

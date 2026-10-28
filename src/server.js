@@ -369,7 +369,10 @@ export function createServer(options = {}) {
     }
   }
 
-  // File watcher for live reload with debouncing
+  // File watcher for live reload. Saves come in bursts (an editor writing a file several times,
+  // an agent saving a page and its stylesheet together), so changes are collected for 100 ms and
+  // then sent once each.
+  const changedFiles = new Set();
   let watchDebounceTimer = null;
   let watcher = null;
 
@@ -387,19 +390,21 @@ export function createServer(options = {}) {
         return;
       }
 
+      changedFiles.add(normalized);
       clearTimeout(watchDebounceTimer);
       watchDebounceTimer = setTimeout(() => {
-        const isManifest = normalized === manifestFile;
-        const isHtml = normalized.endsWith('.html');
-        const eventData = JSON.stringify({
-          type: isManifest ? 'manifest' : 'file',
-          file: normalized,
-          isHtml,
-          timestamp: Date.now()
-        });
-
-        for (const client of clients) {
-          client.write(`event: change\ndata: ${eventData}\n\n`);
+        const files = [...changedFiles];
+        changedFiles.clear();
+        for (const file of files) {
+          const eventData = JSON.stringify({
+            type: file === manifestFile ? 'manifest' : 'file',
+            file,
+            isHtml: /\.html?$/i.test(file),
+            timestamp: Date.now()
+          });
+          for (const client of clients) {
+            client.write(`event: change\ndata: ${eventData}\n\n`);
+          }
         }
       }, 100);
     });
@@ -412,6 +417,7 @@ export function createServer(options = {}) {
     targetDir,
     rootDir,
     close: () => {
+      clearTimeout(watchDebounceTimer);
       if (watcher) watcher.close();
       for (const client of clients) {
         client.end();
