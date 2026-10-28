@@ -32,8 +32,8 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 🛸 **Infinite Canvas**: Drag or scroll to move, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll or pinch to zoom (2% to 800%), with a mouse, a trackpad or a touch screen. Names and section titles stay sharp at any zoom, and the dot grid keeps its spacing.
 - ⚡ **Zero Dependencies**: Pure native Node.js ES modules, fonts included. Runs instantly with `npx htmlboard`, offline too.
 - 🔄 **State-Preserving Live Reload**: The server watches the project and pushes every save (Server-Sent Events). Saving a design reloads its frame; saving a file designs use (a stylesheet, a script, an image, data) reloads just the designs that loaded it; new, removed and renamed designs show up by themselves. Your view never moves.
-- 🔍 **Auto-Discovery**: Point HtmlBoard at any folder. It finds every HTML file, names it after its `<title>`, sizes it from words in its path (mobile, tablet, desktop…) and lays the folders out as rows.
-- 📐 **Declarative Manifest (`designs.json`)**: Optional file to choose the sections, the order, the sizes and the names.
+- 📂 **Designs That Describe Themselves**: Every HTML file is a design, each folder a section, number prefixes the order. A file says its own size, category and variants in a `<meta>` tag or two, so adding a design means writing one file — nothing to keep in sync.
+- 📐 **Optional `designs.json`**: Curates when you want it (section titles, order, overrides); designs it doesn't list still show at the end, or don't (`"unlisted": "hide"`). `htmlboard migrate` moves an existing one into the files.
 - 📱 **Device Filters**: **Mobile**, **Tablet** and **Desktop** (and **Components**, or your own categories) lay out just those designs, side by side, to compare them.
 - 🔎 **Search**: Find designs by name, file, tags or section (case and accents don't matter); the others fade out in place.
 - 🎯 **Focus & Zoom-to-Fit**: Click a design in the list or double-click it on the canvas to fit it, <kbd>Shift</kbd> + <kbd>1</kbd> fits everything, <kbd>←</kbd> <kbd>→</kbd> step through the designs.
@@ -59,7 +59,7 @@ htmlboard
 
 ### Scaffold a Starter Project
 
-To create a new workspace with starter templates (mobile screen, desktop dashboard, and component library):
+To start with sample designs (a folder of screens and a folder of components, each file describing itself):
 
 ```bash
 npx htmlboard --init
@@ -74,6 +74,7 @@ Usage:
   htmlboard [directory] [options]
   npx htmlboard [directory] [options]
   htmlboard skills <install|uninstall> [options]   Teach your AI agent to use HtmlBoard
+  htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -81,7 +82,7 @@ Options:
   -r, --root <path>     Serve files from this parent folder, so artboards can link to
                         shared files outside the designs folder (default: the designs folder)
   -o, --open            Open the explorer automatically in default browser
-      --init            Scaffold starter designs.json and sample artboards
+      --init            Add sample designs (two folders of artboards)
   -v, --version         Display HtmlBoard version
   -h, --help            Display help message
 ```
@@ -101,8 +102,12 @@ htmlboard ./src/designs -p 8080
 # Artboards in ./design that link to the site's own ../css and ../js
 htmlboard design --root .
 
-# Initialize sample templates in a new folder
+# Start a new folder with sample designs
 htmlboard ./my-new-ui --init --open
+
+# See what moving ./design/designs.json into its files would do, then do it
+htmlboard migrate design
+htmlboard migrate design --write
 ```
 
 ---
@@ -113,7 +118,7 @@ HtmlBoard is built from the ground up to pair with AI coding agents (Claude, Gem
 
 ### Install the agent skill
 
-HtmlBoard ships an [Agent Skill](https://agentskills.io) that teaches your agent how to use it: where to put artboards, how to size and name them, how `designs.json` works and how to start the canvas. Install it in your project:
+HtmlBoard ships an [Agent Skill](https://agentskills.io) that teaches your agent how to use it: where to put artboards, how to size, name and group them (files describe themselves; `designs.json` is optional) and how to start the canvas. Install it in your project:
 
 ```bash
 npx htmlboard skills install
@@ -133,7 +138,9 @@ Running `install` again after upgrading HtmlBoard updates the skill; a copy you 
 ### The workflow
 
 1. **Ask your LLM to generate artboards:**
-   > *"Create 3 design explorations for our checkout flow in `artboards/checkout-v1.html`, `artboards/checkout-v2.html`, and `artboards/checkout-v3.html`."*
+   > *"Create 3 design explorations for our checkout flow in `designs/03-checkout/`."*
+
+   With the skill, the agent writes `01-one-page.html`, `02-steps.html`, `03-express.html`, each with its size in a `<meta>` tag. They show up as a new "checkout" row, in that order.
 
 2. **Run HtmlBoard in the background:**
    ```bash
@@ -145,77 +152,68 @@ Running `install` again after upgrading HtmlBoard updates the skill; a copy you 
 
 ---
 
-## 📋 The `designs.json` Manifest
+## 📂 How Designs Are Found
 
-While HtmlBoard automatically discovers HTML files, you can add a `designs.json` file in your designs folder for custom layout and organization. Only `sections[].designs[].file` is required; the short form is enough:
+Every `.html` file under the folder is a design (hidden folders, `node_modules`, `dist` and `build` aside):
+
+- **Sections are folders.** Each folder is a row on the canvas, named after the folder; the files at the top of the folder make a first row without a title.
+- **Number prefixes set the order** of files and folders: `01-…`, `02-…`, `10-…` (up to three digits; `2` comes before `10`). They don't show in names or in links, so reordering breaks nothing.
+- **A file describes itself** in its `<head>`:
+
+```html
+<title>Checkout</title>                                         <!-- its name -->
+<meta name="description" content="One page, address first">    <!-- its description -->
+<meta name="htmlboard" content="width=390, height=844">         <!-- its size (and category=…) -->
+<meta name="htmlboard:label" content="light">                   <!-- added to its name: "Checkout · light" -->
+<meta name="htmlboard:variant" content="?theme=dark · dark">    <!-- one more frame: "Checkout · dark" -->
+```
+
+| Tag | What it says |
+| :--- | :--- |
+| `<title>` | The design's name (without one: the file's name, prefix and extension off). |
+| `<meta name="description">` | Its description, shown in the list and found by the search. |
+| `<meta name="htmlboard" content="…">` | `width=…`, `height=…`, `category=…` (`mobile`, `tablet`, `desktop`, `components` or your own word), or `skip` to leave the file out (partials, templates). |
+| `<meta name="htmlboard:label">` | Text added to the name of the file's own frame, when it has variants. |
+| `<meta name="htmlboard:variant">` | One more frame of the same file with that query string, then its label. As many as you like; they follow the file. |
+
+**Sizes.** The width is the frame's viewport: the page's CSS needs it before it renders. Give the height for designs of a fixed size (a phone screen, a flyer: the frame is that tall and cuts the rest); leave it out and the frame grows with the page. Without a size, words in the path decide (`mobile` → 390 × 844, `tablet` → 768 × 1024, `desktop` → 1280 × 800, `component` → 720 × 600), else 1200 wide.
+
+**Categories** drive the filters. Left out, they come from words in the path, then from the size when it is a screen's (a phone's width, a tablet's 3:4, a desktop's landscape); flyers, boards and other formats get none and show under **All**.
+
+---
+
+## 📋 `designs.json` (Optional)
+
+A `designs.json` in the folder curates the canvas when folders aren't enough: section titles with accents and capitals, an order across folders, a name or size the file doesn't give. The files still say the rest:
 
 ```json
 {
+  "title": "Wallet app",
   "sections": [
+    { "title": "Onboarding", "designs": ["01-onboarding/01-welcome.html", "01-onboarding/02-sign-up.html"] },
+    { "title": "Checkout · round 2", "folder": "03-checkout" },
     {
-      "title": "Home",
-      "designs": [
-        { "file": "home-mobile.html", "title": "Home · phone", "width": 390, "height": 844 },
-        { "file": "home-mobile.html?theme=dark", "title": "Home · phone · dark", "width": 390, "height": 844 },
-        { "file": "home-desktop.html", "title": "Home · desktop", "width": 1440 }
-      ]
+      "title": "Print",
+      "description": "Flyers for the launch",
+      "designs": [{ "file": "flyer.html", "title": "Launch flyer", "height": 1350 }]
     }
   ]
 }
 ```
 
-Sections are rows (top to bottom) and designs run left to right. A `file` may carry a query string, so one HTML file can show several states. Leave `height` out to let the frame grow with its page. `id` and `category` are derived from the file when left out.
+- Sections come in their order, designs in theirs. An entry is a file name, or `{ "file", … }` with values that win over the file's (`title`, `description`, `width`, `height`, `category`, `tags`, `id`). A `file` may carry a query string to place a variant itself.
+- A file's variants follow it unless designs.json lists them. `"folder"` brings a whole folder (in prefix order).
+- **Designs it doesn't list still show**, after the ones it does: in the section that holds their folder, else in their folder's own section (the files at the top in "Unlisted"). `"unlisted": "hide"` shows only what it lists.
+- `name` and `artboards` are synonyms of `title` and `designs`.
 
-The full form adds ids, descriptions (shown in the list), tags (searchable) and categories, which drive the filters: `mobile`, `tablet`, `desktop`, `components` or any word of yours. Left out, the category comes from words in the path (mobile, phone, tablet, desktop…), then from the size when it is a screen's (a phone's width, a tablet's 3:4, a desktop's landscape); flyers, boards and other formats get none and show under **All**. `name`/`artboards` are synonyms of `title`/`designs`:
+### Moving an existing `designs.json` into the files
 
-```json
-{
-  "title": "Fintech Mobile & Web App",
-  "description": "Exploration of screen flows, responsive layouts, and UI components",
-  "sections": [
-    {
-      "id": "screens",
-      "name": "Screen Layouts",
-      "description": "Full page layouts across mobile and desktop viewports",
-      "artboards": [
-        {
-          "id": "desktop-dashboard",
-          "title": "Desktop Dashboard",
-          "file": "artboards/desktop.html",
-          "width": 1280,
-          "height": 820,
-          "category": "desktop",
-          "tags": ["desktop", "dashboard", "analytics"]
-        },
-        {
-          "id": "mobile-app",
-          "title": "Mobile App Feed",
-          "file": "artboards/mobile.html",
-          "width": 390,
-          "height": 844,
-          "category": "mobile",
-          "tags": ["mobile", "ios", "finance"]
-        }
-      ]
-    },
-    {
-      "id": "components",
-      "name": "Component Library",
-      "artboards": [
-        {
-          "id": "ui-primitives",
-          "title": "UI Kit Elements",
-          "file": "artboards/components.html",
-          "width": 780,
-          "height": 720,
-          "category": "components",
-          "tags": ["design-system", "buttons", "inputs"]
-        }
-      ]
-    }
-  ]
-}
+```bash
+npx htmlboard migrate design          # shows what it would do, and checks the canvas stays the same
+npx htmlboard migrate design --write  # does it
 ```
+
+It writes each file's size, category, label, variants and description as tags after its `<title>`, and leaves designs.json with the sections, their titles and order, and the values the files can't say (a name that isn't the file's `<title>` plus a label, say).
 
 ---
 
@@ -261,6 +259,15 @@ console.log(`HtmlBoard running at ${instance.url}`);
 // await instance.close();
 ```
 
+The list of designs is there too, as the explorer gets it:
+
+```javascript
+import { loadDesignsManifest } from 'htmlboard';
+
+const { sections } = loadDesignsManifest('./designs');
+// → [{ id: 'screens', name: 'screens', artboards: [{ id, title, file, width, height, category }, …] }, …]
+```
+
 The skill installer is exported too:
 
 ```javascript
@@ -280,7 +287,9 @@ htmlboard/
 │   └── htmlboard.js      # CLI executable
 ├── src/
 │   ├── index.js          # Library entry point & API exports
-│   ├── server.js         # HTTP server, SSE live reload, auto-discovery
+│   ├── server.js         # HTTP server, SSE live reload
+│   ├── designs.js        # Which designs a folder holds: files, their tags, designs.json
+│   ├── migrate.js        # `htmlboard migrate`
 │   ├── skills.js         # `htmlboard skills` installer
 │   ├── client/           # The canvas
 │   │   ├── index.html    # Explorer shell: list, canvas, toolbar, shortcuts
@@ -288,9 +297,9 @@ htmlboard/
 │   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
 │   │   ├── favicon.svg, logo.svg, mark.svg
 │   │   └── fonts/        # Inter and Bricolage Grotesque (OFL)
-│   └── templates/        # Starter scaffold templates
-│       ├── designs.json  # Starter manifest
-│       └── artboards/    # Sample mobile, desktop, & component screens
+│   └── templates/        # The sample designs `--init` adds
+│       ├── 01-screens/   # Desktop dashboard, mobile feed
+│       └── 02-components/
 ├── skills/
 │   └── htmlboard/        # Agent skill (SKILL.md) copied by `htmlboard skills install`
 ├── brand/                # The logo's files (from design/tools/logo.py)
