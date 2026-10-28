@@ -24,15 +24,15 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 
 ## ✨ Features
 
-- 🛸 **Infinite Canvas**: Smoothly pan, zoom (from 5% to 300%), and fly across dozens of artboards with trackpad or mouse.
-- ⚡ **Zero Dependencies**: Pure native Node.js ES modules. Runs instantly with `npx htmlboard` without installing heavy packages.
-- 🔄 **State-Preserving Live Reload**: Automatically watches files via Server-Sent Events (SSE). When you or an LLM edit an HTML file, the corresponding artboard updates instantly without resetting your canvas pan/zoom position; editing a shared CSS, script or image reloads them all.
-- 🔍 **Auto-Discovery**: Point HtmlBoard at any folder. It automatically discovers all HTML files, extracts their titles, classifies them by device type, and renders them onto the canvas.
-- 📐 **Declarative Manifest (`designs.json`)**: Optional structured schema to organize artboards into sections, define custom viewports (iPhone, iPad, MacBook, 4K), and attach metadata.
-- 📱 **Multi-Device Categories**: One-click filters for Mobile (390×844), Desktop (1280×820), Tablet (768×1024), and Component kits.
-- 🎯 **Focus & Zoom-to-Fit**: Instantly center any artboard with a click in the sidebar, or hit <kbd>F</kbd> to fit all designs on screen.
-- 🔗 **Deep Links**: The URL follows the focused artboard (`http://localhost:3000/#checkout-b`), so you can share or reload a view of one design.
-- ⌨️ **Keyboard-First Workflow**: Full suite of intuitive shortcuts matching design industry standards.
+- 🛸 **Infinite Canvas**: Drag or scroll to move, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll or pinch to zoom (2% to 800%), with a mouse, a trackpad or a touch screen. Names and section titles stay sharp at any zoom, and the dot grid keeps its spacing.
+- ⚡ **Zero Dependencies**: Pure native Node.js ES modules, fonts included. Runs instantly with `npx htmlboard`, offline too.
+- 🔄 **State-Preserving Live Reload**: The server watches the project and pushes every save (Server-Sent Events). Saving a design reloads its frame; saving a file designs use (a stylesheet, a script, an image, data) reloads just the designs that loaded it; new, removed and renamed designs show up by themselves. Your view never moves.
+- 🔍 **Auto-Discovery**: Point HtmlBoard at any folder. It finds every HTML file, names it after its `<title>`, sizes it from words in its path (mobile, tablet, desktop…) and lays the folders out as rows.
+- 📐 **Declarative Manifest (`designs.json`)**: Optional file to choose the sections, the order, the sizes and the names.
+- 🔎 **Search**: Find designs by name, file, tags or section (case and accents don't matter); the others fade out in place.
+- 🎯 **Focus & Zoom-to-Fit**: Click a design in the list or double-click it on the canvas to fit it, <kbd>Shift</kbd> + <kbd>1</kbd> fits everything, <kbd>←</kbd> <kbd>→</kbd> step through the designs.
+- 🔗 **Deep Links**: The URL follows the selected design (`http://localhost:3000/#checkout-b`), so you can share or reload a view of one design.
+- ⌨️ **Keyboard-First Workflow**: Figma-like shortcuts; <kbd>?</kbd> lists them.
 
 ---
 
@@ -160,7 +160,7 @@ While HtmlBoard automatically discovers HTML files, you can add a `designs.json`
 
 Sections are rows (top to bottom) and designs run left to right. A `file` may carry a query string, so one HTML file can show several states. Leave `height` out to let the frame grow with its page. `id` and `category` are derived from the file when left out.
 
-The full form adds ids, descriptions, categories (for the toolbar filters) and searchable tags (`name`/`artboards` are synonyms of `title`/`designs`):
+The full form adds ids, descriptions (shown in the list), categories and tags (searchable); `name`/`artboards` are synonyms of `title`/`designs`:
 
 ```json
 {
@@ -217,16 +217,22 @@ The full form adds ids, descriptions, categories (for the toolbar filters) and s
 
 | Shortcut | Action |
 | :--- | :--- |
-| <kbd>Space</kbd> + <kbd>Drag</kbd> | Pan the canvas freely |
-| <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Wheel</kbd> | Zoom in/out anchored to cursor |
-| <kbd>+</kbd> / <kbd>-</kbd> | Zoom in / Zoom out |
-| <kbd>0</kbd> | Reset zoom to 100% |
-| <kbd>F</kbd> or <kbd>Shift</kbd> + <kbd>1</kbd> | Fit all artboards in viewport |
-| <kbd>/</kbd> or <kbd>⌘</kbd> + <kbd>K</kbd> | Search artboards by title, tag, or path |
-| <kbd>[</kbd> or <kbd>]</kbd> | Toggle navigation sidebar |
-| <kbd>1</kbd> – <kbd>5</kbd> | Quick filter by device category |
-| <kbd>?</kbd> | Show keyboard shortcuts modal |
-| <kbd>Esc</kbd> | Close modals or blur search |
+| Drag, <kbd>Space</kbd> + drag | Move around |
+| Scroll (<kbd>Shift</kbd>: sideways) | Move around |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, pinch | Zoom, anchored to the pointer |
+| <kbd>+</kbd> / <kbd>−</kbd> | Zoom in / out |
+| <kbd>Shift</kbd> + <kbd>0</kbd> | Zoom to 100% |
+| <kbd>Shift</kbd> + <kbd>1</kbd> | Fit everything (what the search keeps) |
+| <kbd>Shift</kbd> + <kbd>2</kbd>, double-click | Fit the design |
+| <kbd>←</kbd> / <kbd>→</kbd> | Previous / next design |
+| <kbd>Enter</kbd> | Open the selected design on its own |
+| <kbd>/</kbd> | Search (<kbd>Enter</kbd> fits the first match, <kbd>Esc</kbd> clears) |
+| <kbd>R</kbd> | Reload the designs |
+| <kbd>\</kbd> | Show or hide the list |
+| <kbd>?</kbd> | Show the shortcuts |
+| <kbd>Esc</kbd> | Deselect |
+
+On the canvas the designs are pictures: the canvas takes every click and scroll, so <kbd>Ctrl</kbd> + scroll never zooms the page itself. Use **Open** (or <kbd>Enter</kbd>) to try a design's links and hover states on its own.
 
 ---
 
@@ -269,10 +275,11 @@ htmlboard/
 │   ├── index.js          # Library entry point & API exports
 │   ├── server.js         # HTTP server, SSE live reload, auto-discovery
 │   ├── skills.js         # `htmlboard skills` installer
-│   ├── client/           # The infinite canvas frontend
-│   │   ├── index.html    # Explorer shell & canvas DOM
-│   │   ├── explorer.css  # Dark theme styles & canvas grid
-│   │   └── explorer.js   # Pan/zoom engine, SSE listener, auto-measure
+│   ├── client/           # The canvas
+│   │   ├── index.html    # Explorer shell: list, canvas, toolbar, shortcuts
+│   │   ├── explorer.css  # Dark chrome, dot grid
+│   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
+│   │   └── fonts/        # Inter and Bricolage Grotesque (OFL)
 │   └── templates/        # Starter scaffold templates
 │       ├── designs.json  # Starter manifest
 │       └── artboards/    # Sample mobile, desktop, & component screens
@@ -288,3 +295,5 @@ htmlboard/
 ## 📄 License
 
 MIT © Luiz Carlos & Contributors
+
+The explorer ships the Inter and Bricolage Grotesque fonts under the SIL Open Font License 1.1 (see `src/client/fonts/`).

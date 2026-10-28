@@ -93,15 +93,12 @@ Examples:
   htmlboard --init              # Initialize starter templates in current folder
   htmlboard skills install      # Add the HtmlBoard skill to this project's agents
 
-Keyboard Shortcuts in Canvas:
-  Space + Drag          Pan canvas
-  Ctrl/Cmd + Wheel      Zoom into focal point
-  + / -                 Zoom in / Zoom out
-  0                     Reset zoom to 100%
-  F                     Zoom to fit all artboards
-  / or Cmd+K            Search artboards
-  [ or ]                Toggle navigation sidebar
-  ?                     Show shortcuts help dialog
+On the canvas:
+  Drag, scroll          Move around
+  Ctrl/Cmd + scroll     Zoom (or pinch)
+  Double-click          Fit a design (Shift + 1 fits everything)
+  /                     Search
+  ?                     All the shortcuts
 `);
 }
 

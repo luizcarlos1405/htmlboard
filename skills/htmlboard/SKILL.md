@@ -77,16 +77,16 @@ One design per file. Keep each file self-contained so it renders on its own:
 - Sections are rows, top to bottom; designs run left to right.
 - `file` is relative to the designs folder and may carry a query string, so one file can show several states.
 - Omit `height` to let the frame grow to the page's full height (long pages, boards, docs).
-- Optional: `description` and `tags` (searchable); `category` for the toolbar filters (`desktop`, `mobile`, `tablet`, `components`; guessed from the path, then the width, when left out); `id` (derived from `file`).
+- Optional: `description` (shown in the list), `tags` and `category` (searchable), `id` (derived from `file`).
 - `name` and `artboards` are accepted as synonyms of a section's `title` and `designs`.
 
 When the project already has a `designs.json`, add every new file to it.
 
 ## Live reload
 
-- Saving an artboard's HTML reloads just that frame; the user's pan and zoom stay put.
-- Saving `designs.json`, or creating a new HTML file, rebuilds the canvas.
-- Saving a shared file (CSS, script, image) reloads every frame.
+- Saving an artboard's HTML reloads just that frame; the user's view stays put.
+- Saving a file artboards use (a stylesheet, a script, an image, data) reloads the artboards that loaded it.
+- Saving `designs.json`, or adding or removing artboards, rebuilds the canvas.
 
 ## Working with the user
 
