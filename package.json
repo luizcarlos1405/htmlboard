@@ -34,7 +34,7 @@
     "claude-code",
     "codex"
   ],
-  "author": "Luiz Carlos <luizcarlos1405>",
+  "author": "Luiz Carlos (https://github.com/luizcarlos1405)",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
