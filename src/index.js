@@ -9,3 +9,10 @@ export {
   discoverDesigns,
   loadDesignsManifest
 } from './server.js';
+
+export {
+  installSkills,
+  uninstallSkills,
+  SKILLS_DIR,
+  SKILL_TARGETS
+} from './skills.js';

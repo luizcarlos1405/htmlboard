@@ -66,6 +66,7 @@ npx htmlboard --init
 Usage:
   htmlboard [directory] [options]
   npx htmlboard [directory] [options]
+  htmlboard skills <install|uninstall> [options]   Teach your AI agent to use HtmlBoard
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -96,7 +97,28 @@ htmlboard ./my-new-ui --init --open
 
 ## 🤖 Working with LLMs (AI-Assisted Prototyping)
 
-HtmlBoard is built from the ground up to pair with AI coding agents (Claude, Gemini, Codex, ChatGPT, Antigravity, Cursor):
+HtmlBoard is built from the ground up to pair with AI coding agents (Claude, Gemini, Codex, ChatGPT, Antigravity, Cursor).
+
+### Install the agent skill
+
+HtmlBoard ships an [Agent Skill](https://agentskills.io) that teaches your agent how to use it: where to put artboards, how to size and name them, how `designs.json` works and how to start the canvas. Install it in your project:
+
+```bash
+npx htmlboard skills install
+```
+
+This writes `.claude/skills/htmlboard/` (Claude Code) and `.agents/skills/htmlboard/` (Codex and other agents that read `.agents/skills`). Commit them so everyone working on the project gets the skill. Then start a new agent session and just ask for a design.
+
+```bash
+npx htmlboard skills install --global         # for your user (~/.claude/skills, ~/.agents/skills), all projects
+npx htmlboard skills install --agent claude   # only one agent: claude | agents | all (default)
+npx htmlboard skills install --force          # update a copy you edited locally
+npx htmlboard skills uninstall                # remove it (accepts the same --global / --agent)
+```
+
+Running `install` again after upgrading HtmlBoard updates the skill; a copy you edited is kept unless you pass `--force`.
+
+### The workflow
 
 1. **Ask your LLM to generate artboards:**
    > *"Create 3 design explorations for our checkout flow in `artboards/checkout-v1.html`, `artboards/checkout-v2.html`, and `artboards/checkout-v3.html`."*
@@ -201,6 +223,15 @@ console.log(`HtmlBoard running at ${instance.url}`);
 // await instance.close();
 ```
 
+The skill installer is exported too:
+
+```javascript
+import { installSkills } from 'htmlboard';
+
+installSkills({ dir: process.cwd(), agent: 'all' });
+// → [{ skill: 'htmlboard', path: '…/.claude/skills/htmlboard', status: 'installed' }, …]
+```
+
 ---
 
 ## 📂 Project Structure
@@ -212,6 +243,7 @@ htmlboard/
 ├── src/
 │   ├── index.js          # Library entry point & API exports
 │   ├── server.js         # HTTP server, SSE live reload, auto-discovery
+│   ├── skills.js         # `htmlboard skills` installer
 │   ├── client/           # The infinite canvas frontend
 │   │   ├── index.html    # Explorer shell & canvas DOM
 │   │   ├── explorer.css  # Dark theme styles & canvas grid
@@ -219,6 +251,8 @@ htmlboard/
 │   └── templates/        # Starter scaffold templates
 │       ├── designs.json  # Starter manifest
 │       └── artboards/    # Sample mobile, desktop, & component screens
+├── skills/
+│   └── htmlboard/        # Agent skill (SKILL.md) copied by `htmlboard skills install`
 ├── package.json
 ├── README.md
 └── LICENSE

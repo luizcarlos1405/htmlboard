@@ -10,6 +10,7 @@
   "files": [
     "bin",
     "src",
+    "skills",
     "README.md",
     "LICENSE"
   ],
@@ -28,7 +29,10 @@
     "infinite-canvas",
     "llm",
     "prototyping",
-    "live-reload"
+    "live-reload",
+    "agent-skills",
+    "claude-code",
+    "codex"
   ],
   "author": "Luiz Carlos <luizcarlos1405>",
   "license": "MIT",
