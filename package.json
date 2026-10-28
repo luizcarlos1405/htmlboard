@@ -36,6 +36,14 @@
   ],
   "author": "Luiz Carlos (https://github.com/luizcarlos1405)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luizcarlos1405/htmlboard.git"
+  },
+  "homepage": "https://github.com/luizcarlos1405/htmlboard#readme",
+  "bugs": {
+    "url": "https://github.com/luizcarlos1405/htmlboard/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   }
