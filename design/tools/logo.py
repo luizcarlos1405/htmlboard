@@ -157,6 +157,7 @@ BOARD = '''<!doctype html>
 <head>
   <meta charset="utf-8">
   <title>Logo · Hanging row</title>
+  <meta name="htmlboard" content="width=1200">
   <link rel="stylesheet" href="brand.css">
 </head>
 <body>

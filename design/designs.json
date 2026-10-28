@@ -5,13 +5,19 @@
       "title": "Logo",
       "description": "Hanging row, picked 2026-10-28. Its files come from design/tools/logo.py.",
       "designs": [
-        { "file": "logo.html", "title": "Hanging row", "width": 1200 }
+        {
+          "file": "logo.html",
+          "title": "Hanging row"
+        }
       ]
     },
     {
       "title": "Logo · the round of five (2026-10-28)",
       "designs": [
-        { "file": "logo-options.html", "title": "The five options", "width": 1500 }
+        {
+          "file": "logo-options.html",
+          "title": "The five options"
+        }
       ]
     }
   ]
