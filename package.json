@@ -4,7 +4,7 @@
   "description": "Infinite canvas and design explorer for HTML artboards — designed for humans and LLMs",
   "type": "module",
   "bin": {
-    "htmlboard": "./bin/htmlboard.js"
+    "htmlboard": "bin/htmlboard.js"
   },
   "main": "./src/index.js",
   "files": [
