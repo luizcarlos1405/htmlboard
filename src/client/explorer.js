@@ -1,693 +1,950 @@
-// HtmlBoard Canvas & Explorer Engine
-class HtmlBoardExplorer {
-  constructor() {
-    this.manifest = null;
-    this.artboards = [];
-    this.currentCategory = 'all';
-    this.searchQuery = '';
-    this.activeArtboardId = null;
+// HtmlBoard explorer: every design of the project side by side on one canvas.
+// Each design is an HTML file shown in an iframe at its real size, and the canvas pans and zooms
+// with one CSS transform. Names, outlines and section titles are drawn over it in screen pixels,
+// so they stay sharp and readable at any zoom. The server lists the designs at /api/designs and
+// pushes saved files at /api/events.
 
-    // Canvas Transform State
-    this.panX = 80;
-    this.panY = 80;
-    this.scale = 0.85;
-    this.minScale = 0.05;
-    this.maxScale = 3.0;
+const FRAME_GAP = 120;     // canvas px between the designs of a section
+const SECTION_GAP = 560;   // canvas px between sections
+const MIN_ZOOM = 0.02;
+const MAX_ZOOM = 8;
+const MAX_FIT_ZOOM = 2;    // fitting one small design stops at 200%
+const ZOOM_STEP = 1.5;     // + and −, keys and buttons
+const MARGIN = 40;         // screen px around what a fit shows
+const NAME_SPACE = 24;     // screen px above a design for its name
+const MIN_NAMED = 56;      // screen px a design needs to be wide to show its name
+const TITLE_SPACE = 56;    // screen px above a section for its title and the names
+const TOOLBAR_SPACE = 64;  // screen px kept clear at the bottom for the toolbar
+const DRAG_SLOP = 4;       // screen px a press can move and still be a click
+const DOUBLE_MS = 350;
+const CHANGE_MS = 60;      // saved files arriving this close together are applied at once
+const DEFAULT_SIZE = [1200, 800]; // a design whose entry gives no size; without a height it grows with its page
 
-    // Interaction State
-    this.isPanning = false;
-    this.isSpaceDown = false;
-    this.startX = 0;
-    this.startY = 0;
-    this.initialPanX = 0;
-    this.initialPanY = 0;
+const $ = (id) => document.getElementById(id);
+const els = {
+  app: $('app'), title: $('title'), list: $('list'), count: $('count'), search: $('search'),
+  noMatch: $('no-match'), viewport: $('viewport'), world: $('world'), overlay: $('overlay'),
+  hover: $('hover'), selection: $('selection'), size: $('size'), zoom: $('zoom-reset'), open: $('open'),
+  live: $('live'), help: $('help'), helpToggle: $('help-toggle'), toggleList: $('toggle-list'),
+  toast: $('toast'), notice: $('notice'), noticeTitle: $('notice-title'), noticeText: $('notice-text'),
+};
 
-    this.cacheBustCounter = 1;
-    this.eventSource = null;
+const state = {
+  manifest: '',         // /api/designs as last read, to tell a real change
+  autoDiscovered: false, // no designs.json: every HTML file is a design
+  sections: [],         // { name, designs, el, group, x, y, w, h }
+  designs: [],          // { id, file, path, title, search, w, h, autoHeight, x, y, frame, iframe, label, item, … }
+  view: { x: 0, y: 0, z: 1 },
+  selected: null,
+  hover: null,
+  query: [],            // the search's words, folded
+  // What the first view fitted ('all' or a design). Until the user moves the canvas, it is fitted
+  // again when the designs' real sizes come in.
+  autoFit: null,
+};
 
-    this.initDOMElements();
-    this.attachEventListeners();
-    this.connectLiveReload();
-    this.loadManifest();
+const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+// Case and accents don't matter to the search: "inicio" finds "Início".
+const fold = (text) => String(text).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// Stored per project (the server says which folder it serves), so two projects don't share a view.
+let storePrefix = 'htmlboard:';
+
+function readStore(key) {
+  try {
+    return JSON.parse(localStorage.getItem(storePrefix + key));
+  } catch {
+    return null;
   }
+}
 
-  initDOMElements() {
-    this.viewport = document.getElementById('canvas-viewport');
-    this.stage = document.getElementById('canvas-stage');
-    this.content = document.getElementById('canvas-content');
-    this.grid = document.getElementById('canvas-grid');
-    this.shield = document.getElementById('pointer-shield');
-    this.sidebar = document.getElementById('sidebar');
-    this.sidebarTree = document.getElementById('sidebar-tree');
-    this.artboardCountEl = document.getElementById('artboard-count');
-    this.projectTitleEl = document.getElementById('project-title');
-    this.zoomLevelEl = document.getElementById('zoom-level');
-    this.hudCoordsEl = document.getElementById('hud-coordinates');
-    this.liveIndicator = document.getElementById('live-indicator');
-    this.shortcutsModal = document.getElementById('shortcuts-modal');
-    this.searchInput = document.getElementById('search-input');
-    this.filterTabs = document.getElementById('filter-tabs');
-
-    this.btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
-    this.btnZoomIn = document.getElementById('btn-zoom-in');
-    this.btnZoomOut = document.getElementById('btn-zoom-out');
-    this.btnZoomFit = document.getElementById('btn-zoom-fit');
-    this.btnShortcuts = document.getElementById('btn-shortcuts');
-    this.btnCloseModal = document.getElementById('btn-close-modal');
+function writeStore(key, value) {
+  try {
+    localStorage.setItem(storePrefix + key, JSON.stringify(value));
+  } catch {
+    // Storage off (private mode): the explorer just forgets.
   }
+}
 
-  attachEventListeners() {
-    // Window Resize
-    window.addEventListener('resize', () => this.updateHUD());
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
 
-    // Sidebar Toggle
-    this.btnToggleSidebar.addEventListener('click', () => {
-      this.sidebar.classList.toggle('collapsed');
-    });
+const urlOf = (file) => encodeURI(`/${file}`);
 
-    // Zoom Buttons
-    this.btnZoomIn.addEventListener('click', () => this.zoomRelative(1.2));
-    this.btnZoomOut.addEventListener('click', () => this.zoomRelative(0.8));
-    this.btnZoomFit.addEventListener('click', () => this.fitAll());
-    this.zoomLevelEl.addEventListener('click', () => this.setZoom(1.0));
+// ---------------------------------------------------------------- loading
 
-    // Shortcuts Modal
-    this.btnShortcuts.addEventListener('click', () => this.openShortcutsModal());
-    this.btnCloseModal.addEventListener('click', () => this.closeShortcutsModal());
-    this.shortcutsModal.addEventListener('click', (e) => {
-      if (e.target === this.shortcutsModal) this.closeShortcutsModal();
-    });
+async function fetchManifest() {
+  const res = await fetch('/api/designs', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
-    // Category Filter Tabs
-    this.filterTabs.addEventListener('click', (e) => {
-      const tab = e.target.closest('.filter-tab');
-      if (!tab) return;
-      this.filterTabs.querySelectorAll('.filter-tab').forEach((t) => t.classList.remove('active'));
-      tab.classList.add('active');
-      this.currentCategory = tab.dataset.category;
-      this.renderCanvas();
-      this.renderSidebar();
-    });
-
-    // Search Input
-    this.searchInput.addEventListener('input', (e) => {
-      this.searchQuery = e.target.value.toLowerCase().trim();
-      this.renderCanvas();
-      this.renderSidebar();
-    });
-
-    // Canvas Pan & Zoom Mouse Events
-    this.viewport.addEventListener('mousedown', (e) => this.onMouseDown(e));
-    window.addEventListener('mousemove', (e) => this.onMouseMove(e));
-    window.addEventListener('mouseup', () => this.onMouseUp());
-    this.viewport.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
-
-    // Keyboard Shortcuts
-    window.addEventListener('keydown', (e) => this.onKeyDown(e));
-
-    // Deep links: #<artboard id> focuses that artboard
-    window.addEventListener('hashchange', () => {
-      const id = this.artboardIdFromHash();
-      if (id && id !== this.activeArtboardId) this.focusArtboard(id);
-    });
-    window.addEventListener('keyup', (e) => this.onKeyUp(e));
-  }
-
-  // --- Canvas Navigation ---
-
-  applyTransform() {
-    this.stage.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.scale})`;
-    this.zoomLevelEl.textContent = `${Math.round(this.scale * 100)}%`;
-    this.updateHUD();
-  }
-
-  updateHUD() {
-    if (this.hudCoordsEl) {
-      this.hudCoordsEl.textContent = `X: ${Math.round(this.panX)} Y: ${Math.round(this.panY)}`;
+function build(manifest) {
+  els.world.replaceChildren();
+  els.list.replaceChildren();
+  for (const node of els.overlay.querySelectorAll('.label, .section-title')) node.remove();
+  state.manifest = JSON.stringify(manifest);
+  state.autoDiscovered = Boolean(manifest.autoDiscovered);
+  state.sections = [];
+  state.designs = [];
+  state.selected = null;
+  state.hover = null;
+  const title = manifest.title || 'Designs';
+  els.title.textContent = title;
+  document.title = `${title} · HtmlBoard`;
+  for (const entry of manifest.sections || []) {
+    const name = entry.name || '';
+    const section = { name, designs: [], el: el('div', 'section-title', name), group: el('section') };
+    els.overlay.insertBefore(section.el, els.hover);
+    const items = el('ul');
+    section.group.append(el('h2', null, name));
+    if (entry.description) section.group.append(el('p', 'section-desc', entry.description));
+    section.group.append(items);
+    for (const board of entry.artboards || []) {
+      const design = makeDesign(board, section);
+      section.designs.push(design);
+      state.designs.push(design);
+      items.append(design.li);
     }
+    els.list.append(section.group);
+    state.sections.push(section);
   }
-
-  zoomRelative(factor, focalX = null, focalY = null) {
-    const rect = this.viewport.getBoundingClientRect();
-    const cx = focalX !== null ? focalX - rect.left : rect.width / 2;
-    const cy = focalY !== null ? focalY - rect.top : rect.height / 2;
-
-    const oldScale = this.scale;
-    let newScale = oldScale * factor;
-    newScale = Math.min(Math.max(newScale, this.minScale), this.maxScale);
-
-    if (newScale === oldScale) return;
-
-    const ratio = newScale / oldScale;
-    this.panX = cx - ratio * (cx - this.panX);
-    this.panY = cy - ratio * (cy - this.panY);
-    this.scale = newScale;
-
-    this.applyTransform();
+  if (!state.designs.length) {
+    showNotice(
+      'No designs yet',
+      state.autoDiscovered
+        ? 'Save an .html file in this folder and it shows up here by itself.'
+        : 'designs.json lists no designs yet. Add one and it shows up here by itself.',
+    );
+  } else {
+    els.notice.hidden = true;
   }
+  applySearch();
+  layout();
+}
 
-  setZoom(targetScale) {
-    const rect = this.viewport.getBoundingClientRect();
-    const cx = rect.width / 2;
-    const cy = rect.height / 2;
-    const ratio = targetScale / this.scale;
+function makeDesign(board, section) {
+  const file = String(board.file);
+  const design = {
+    id: String(board.id || file),
+    file,
+    path: `/${file.split('?')[0]}`,
+    title: board.title || file,
+    w: Number(board.width) || DEFAULT_SIZE[0],
+    h: Number(board.height) || DEFAULT_SIZE[1],
+    autoHeight: !Number(board.height),
+    x: 0,
+    y: 0,
+  };
+  design.search = fold([design.title, file, board.description, board.category, ...(board.tags || []), section.name]
+    .filter(Boolean).join(' '));
+  design.frame = el('div', 'frame');
+  design.iframe = el('iframe');
+  design.iframe.title = design.title;
+  design.iframe.tabIndex = -1;
+  design.iframe.setAttribute('scrolling', 'no');
+  design.iframe.addEventListener('load', () => onLoad(design));
+  design.iframe.src = urlOf(file);
+  design.frame.append(design.iframe);
+  els.world.append(design.frame);
 
-    this.panX = cx - ratio * (cx - this.panX);
-    this.panY = cy - ratio * (cy - this.panY);
-    this.scale = targetScale;
+  design.label = el('div', 'label', design.title);
+  els.overlay.insertBefore(design.label, els.hover);
 
-    this.applyTransform();
-  }
+  design.item = el('button', 'item');
+  design.item.type = 'button';
+  if (board.description) design.item.title = board.description;
+  design.itemDims = el('span', 'dims');
+  design.item.append(el('span', 'name', design.title), design.itemDims);
+  design.item.addEventListener('click', () => {
+    state.autoFit = null;
+    select(design, { fit: true });
+  });
+  design.li = el('li');
+  design.li.append(design.item);
+  showDims(design);
+  return design;
+}
 
-  fitAll() {
-    const visibleCards = this.content.querySelectorAll('.artboard-frame');
-    if (!visibleCards || visibleCards.length === 0) return;
+function showDims(design) {
+  design.itemDims.textContent = `${design.w} × ${design.h}`;
+}
 
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+function onLoad(design) {
+  const doc = design.iframe.contentDocument;
+  if (!doc || !design.autoHeight) return;
+  growToPage(design);
+  doc.fonts?.ready.then(() => growToPage(design));
+}
 
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const viewportRect = this.viewport.getBoundingClientRect();
+// A design without a height takes its page's.
+function growToPage(design) {
+  const doc = design.iframe.contentDocument;
+  if (!doc?.documentElement) return;
+  const h = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0));
+  if (!h || h === design.h) return;
+  design.h = h;
+  showDims(design);
+  layout();
+}
 
-    visibleCards.forEach((card) => {
-      const rect = card.getBoundingClientRect();
-      // Calculate coordinates relative to unscaled canvas content (the pan is relative to the viewport)
-      const cardX = (rect.left - viewportRect.left - this.panX) / this.scale;
-      const cardY = (rect.top - viewportRect.top - this.panY) / this.scale;
-      const cardW = rect.width / this.scale;
-      const cardH = rect.height / this.scale;
+// ---------------------------------------------------------------- searching
 
-      if (cardX < minX) minX = cardX;
-      if (cardY < minY) minY = cardY;
-      if (cardX + cardW > maxX) maxX = cardX + cardW;
-      if (cardY + cardH > maxY) maxY = cardY + cardH;
-    });
+function matches(design) {
+  return state.query.every((word) => design.search.includes(word));
+}
 
-    if (minX === Infinity) return;
+// The designs the search keeps (all of them without a search).
+function shown() {
+  return state.query.length ? state.designs.filter(matches) : state.designs;
+}
 
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
-
-    const padding = 80;
-    const availWidth = viewportRect.width - padding * 2;
-    const availHeight = viewportRect.height - padding * 2;
-
-    const scaleX = availWidth / contentWidth;
-    const scaleY = availHeight / contentHeight;
-    let fitScale = Math.min(scaleX, scaleY, 1.0);
-    fitScale = Math.max(fitScale, this.minScale);
-
-    this.scale = fitScale;
-    this.panX = (viewportRect.width - contentWidth * this.scale) / 2 - minX * this.scale;
-    this.panY = (viewportRect.height - contentHeight * this.scale) / 2 - minY * this.scale;
-
-    this.applyTransform();
-  }
-
-  artboardIdFromHash() {
-    const id = decodeURIComponent(location.hash.slice(1));
-    return id && this.artboards.some((board) => board.id === id) ? id : null;
-  }
-
-  focusArtboard(artboardId) {
-    this.activeArtboardId = artboardId;
-    const frame = document.getElementById(`frame-${artboardId}`);
-    if (!frame) return;
-
-    // Keep the URL pointing at the focused artboard, so it can be shared or reloaded
-    history.replaceState(null, '', `#${encodeURIComponent(artboardId)}`);
-
-    // Highlight active card
-    document.querySelectorAll('.artboard-frame').forEach((f) => f.classList.remove('focused'));
-    frame.classList.add('focused');
-
-    document.querySelectorAll('.sidebar-item').forEach((item) => {
-      item.classList.toggle('active', item.dataset.id === artboardId);
-    });
-
-    // Frame position in unscaled canvas coordinates (the pan is relative to the viewport, not the page)
-    const viewportRect = this.viewport.getBoundingClientRect();
-    const rect = frame.getBoundingClientRect();
-    const frameContentX = (rect.left - viewportRect.left - this.panX) / this.scale;
-    const frameContentY = (rect.top - viewportRect.top - this.panY) / this.scale;
-    const frameW = rect.width / this.scale;
-    const frameH = rect.height / this.scale;
-
-    const targetScale = Math.min(Math.max((viewportRect.height * 0.8) / frameH, 0.4), 1.0);
-
-    this.scale = targetScale;
-    this.panX = viewportRect.width / 2 - (frameContentX + frameW / 2) * this.scale;
-    this.panY = viewportRect.height / 2 - (frameContentY + frameH / 2) * this.scale;
-
-    this.applyTransform();
-  }
-
-  // --- Mouse & Pan Handlers ---
-
-  onMouseDown(e) {
-    // If clicking a button, input or link, do not pan
-    if (e.target.closest('button, input, a, .filter-tab')) return;
-
-    // Middle click, Space key down, or clicking on background / shield
-    if (e.button === 1 || this.isSpaceDown || e.target === this.viewport || e.target === this.grid || e.target === this.shield || e.target === this.content) {
-      this.isPanning = true;
-      this.startX = e.clientX;
-      this.startY = e.clientY;
-      this.initialPanX = this.panX;
-      this.initialPanY = this.panY;
-      this.viewport.classList.add('panning');
-      this.shield.classList.add('active');
-      e.preventDefault();
-    }
-  }
-
-  onMouseMove(e) {
-    if (!this.isPanning) return;
-    const dx = e.clientX - this.startX;
-    const dy = e.clientY - this.startY;
-    this.panX = this.initialPanX + dx;
-    this.panY = this.initialPanY + dy;
-    this.applyTransform();
-  }
-
-  onMouseUp() {
-    if (this.isPanning) {
-      this.isPanning = false;
-      this.viewport.classList.remove('panning');
-      if (!this.isSpaceDown) {
-        this.shield.classList.remove('active');
+function applySearch() {
+  let count = 0;
+  for (const section of state.sections) {
+    let any = false;
+    for (const design of section.designs) {
+      const on = matches(design);
+      design.li.hidden = !on;
+      design.frame.classList.toggle('is-dimmed', !on);
+      design.label.classList.toggle('is-dimmed', !on);
+      if (on) {
+        any = true;
+        count++;
       }
     }
+    section.group.hidden = !any;
   }
+  const total = state.designs.length;
+  els.count.textContent = state.query.length ? `${count} of ${total}` : String(total);
+  els.noMatch.hidden = !state.query.length || count > 0;
+}
 
-  onWheel(e) {
-    e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      // Zoom centered at mouse position
-      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-      this.zoomRelative(zoomFactor, e.clientX, e.clientY);
-    } else {
-      // Pan canvas
-      this.panX -= e.deltaX;
-      this.panY -= e.deltaY;
-      this.applyTransform();
+function search(text) {
+  state.query = fold(text).split(/\s+/).filter(Boolean);
+  applySearch();
+}
+
+// ---------------------------------------------------------------- layout and drawing
+
+// Sections are rows, top to bottom; designs sit left to right in each row, tops aligned.
+function layout() {
+  let y = 0;
+  for (const section of state.sections) {
+    let x = 0;
+    let height = 0;
+    for (const design of section.designs) {
+      design.x = x;
+      design.y = y;
+      Object.assign(design.frame.style, { left: `${x}px`, top: `${y}px`, width: `${design.w}px`, height: `${design.h}px` });
+      x += design.w + FRAME_GAP;
+      height = Math.max(height, design.h);
     }
+    Object.assign(section, { x: 0, y, w: Math.max(0, x - FRAME_GAP), h: height });
+    y += height + SECTION_GAP;
   }
+  if (state.autoFit) fit(state.autoFit, { animate: false });
+  else paint();
+}
 
-  // --- Keyboard Shortcuts ---
-
-  onKeyDown(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-      if (e.key === 'Escape') {
-        e.target.blur();
-      }
-      return;
+function paint() {
+  const { x, y, z } = state.view;
+  els.world.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+  // Dots every 32 canvas px, doubled or halved to stay 16 to 64 screen px apart.
+  let grid = 32 * z;
+  while (grid < 16) grid *= 2;
+  while (grid >= 64) grid /= 2;
+  els.viewport.style.setProperty('--grid', `${grid}px`);
+  els.viewport.style.backgroundPosition = `${x}px ${y}px`;
+  // Above each row: the section's title, then the designs' names. Zoomed far out the gap between
+  // rows gets thin: the names give way first, then the title.
+  state.sections.forEach((section, index) => {
+    const room = index ? SECTION_GAP * z : Infinity;
+    const named = room >= TITLE_SPACE + 2;
+    const top = Math.round(y + section.y * z);
+    section.el.hidden = !section.designs.length || room < 30;
+    section.el.style.transform = `translate(${Math.round(x + section.x * z)}px, ${top - (named ? 54 : 30)}px)`;
+    for (const design of section.designs) {
+      const width = design.w * z;
+      design.label.hidden = !named || width < MIN_NAMED;
+      design.label.style.width = `${Math.round(width)}px`;
+      design.label.style.transform = `translate(${Math.round(x + design.x * z)}px, ${top - 22}px)`;
     }
+  });
+  els.zoom.textContent = `${Math.round(z * 100)}%`;
+  paintMarks();
+  saveView();
+}
 
-    if (e.code === 'Space' && !this.isSpaceDown) {
-      this.isSpaceDown = true;
-      this.shield.classList.add('active');
-    } else if (e.key === '=' || e.key === '+') {
-      this.zoomRelative(1.15);
-    } else if (e.key === '-') {
-      this.zoomRelative(0.85);
-    } else if (e.key === '0') {
-      this.setZoom(1.0);
-    } else if (e.key === 'f' || e.key === 'F') {
-      this.fitAll();
-    } else if (e.key === '/') {
-      e.preventDefault();
-      this.searchInput.focus();
-    } else if (e.key === '[' || e.key === ']') {
-      this.sidebar.classList.toggle('collapsed');
-    } else if (e.key === '?') {
-      this.openShortcutsModal();
-    } else if (e.key === 'Escape') {
-      this.closeShortcutsModal();
-    } else if (['1', '2', '3', '4', '5'].includes(e.key)) {
-      const tabs = this.filterTabs.querySelectorAll('.filter-tab');
-      const idx = parseInt(e.key, 10) - 1;
-      if (tabs[idx]) tabs[idx].click();
-    }
+// Selection and hover: the outlines and the names' colours.
+function paintMarks() {
+  place(els.selection, state.selected);
+  place(els.hover, state.hover === state.selected ? null : state.hover);
+  const { selected } = state;
+  els.size.hidden = !selected;
+  if (selected) {
+    const { x, y, z } = state.view;
+    els.size.textContent = `${selected.w} × ${selected.h}`;
+    els.size.style.transform = `translate(${x + (selected.x + selected.w / 2) * z}px, ${y + (selected.y + selected.h) * z + 8}px) translateX(-50%)`;
   }
-
-  onKeyUp(e) {
-    if (e.code === 'Space') {
-      this.isSpaceDown = false;
-      if (!this.isPanning) {
-        this.shield.classList.remove('active');
-      }
-    }
+  for (const design of state.designs) {
+    design.label.classList.toggle('is-selected', design === state.selected);
+    design.label.classList.toggle('is-hover', design === state.hover);
   }
+}
 
-  openShortcutsModal() {
-    this.shortcutsModal.classList.add('open');
+function place(node, design) {
+  node.hidden = !design;
+  if (!design) return;
+  const { x, y, z } = state.view;
+  node.style.transform = `translate(${x + design.x * z}px, ${y + design.y * z}px)`;
+  node.style.width = `${design.w * z}px`;
+  node.style.height = `${design.h * z}px`;
+}
+
+let saveTimer = 0;
+function saveView() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => writeStore('view', state.view), 300);
+}
+
+// ---------------------------------------------------------------- moving the canvas
+
+function setView(view) {
+  state.view = view;
+  paint();
+}
+
+function size() {
+  return { w: els.viewport.clientWidth, h: els.viewport.clientHeight };
+}
+
+function boundsOf(designs) {
+  if (!designs.length) return { x: 0, y: 0, w: 1, h: 1 };
+  const left = Math.min(...designs.map((d) => d.x));
+  const top = Math.min(...designs.map((d) => d.y));
+  const right = Math.max(...designs.map((d) => d.x + d.w));
+  const bottom = Math.max(...designs.map((d) => d.y + d.h));
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+// The view that shows `rect` whole, centred, with `top` screen px free above it for its names.
+function viewFor(rect, top) {
+  const screen = size();
+  const w = Math.max(1, screen.w - 2 * MARGIN);
+  const h = Math.max(1, screen.h - 2 * MARGIN - top - TOOLBAR_SPACE);
+  const z = clamp(Math.min(w / rect.w, h / rect.h), MIN_ZOOM, MAX_FIT_ZOOM);
+  return {
+    z,
+    x: MARGIN + (w - rect.w * z) / 2 - rect.x * z,
+    y: MARGIN + top + (h - rect.h * z) / 2 - rect.y * z,
+  };
+}
+
+// target: 'all' (what the search keeps) or a design.
+function fit(target, { animate = true } = {}) {
+  if (target === 'all') {
+    const designs = shown();
+    moveTo(viewFor(boundsOf(designs.length ? designs : state.designs), TITLE_SPACE), animate);
+  } else {
+    moveTo(viewFor(target, NAME_SPACE), animate);
   }
+}
 
-  closeShortcutsModal() {
-    this.shortcutsModal.classList.remove('open');
+let animation = 0;
+function moveTo(target, animate = true) {
+  cancelAnimationFrame(animation);
+  if (!animate || reducedMotion.matches) {
+    setView(target);
+    return;
   }
+  const from = { ...state.view };
+  const screen = size();
+  const cx = screen.w / 2;
+  const cy = screen.h / 2;
+  // Glide the canvas point under the centre of the screen, and the zoom in proportion.
+  const a = { x: (cx - from.x) / from.z, y: (cy - from.y) / from.z };
+  const b = { x: (cx - target.x) / target.z, y: (cy - target.y) / target.z };
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / 260);
+    const e = 1 - (1 - t) ** 3;
+    const z = from.z * (target.z / from.z) ** e;
+    setView({ x: cx - (a.x + (b.x - a.x) * e) * z, y: cy - (a.y + (b.y - a.y) * e) * z, z });
+    if (t < 1) animation = requestAnimationFrame(frame);
+  };
+  animation = requestAnimationFrame(frame);
+}
 
-  // --- Data Loading & Rendering ---
+// Zoom keeping the canvas point at (px, py) of the screen in place.
+function zoomedAt(px, py, z) {
+  const { x, y, z: from } = state.view;
+  z = clamp(z, MIN_ZOOM, MAX_ZOOM);
+  return { x: px - ((px - x) * z) / from, y: py - ((py - y) * z) / from, z };
+}
 
-  async loadManifest() {
+function zoomBy(factor) {
+  const screen = size();
+  moveTo(zoomedAt(screen.w / 2, screen.h / 2, state.view.z * factor));
+}
+
+// 100%: the selected design, centred (top first when it is taller than the screen), or the
+// middle of the screen.
+function actualSize() {
+  const design = state.selected;
+  if (!design) {
+    zoomBy(1 / state.view.z);
+    return;
+  }
+  const screen = size();
+  const room = screen.h - TOOLBAR_SPACE - NAME_SPACE - 2 * MARGIN;
+  const y = design.h <= room
+    ? MARGIN + NAME_SPACE + (room - design.h) / 2 - design.y
+    : MARGIN + NAME_SPACE - design.y;
+  moveTo({ z: 1, x: (screen.w - design.w) / 2 - design.x, y });
+}
+
+// ---------------------------------------------------------------- selection
+
+function select(design, { fit: fitIt = false, animate = true } = {}) {
+  state.selected = design || null;
+  for (const each of state.designs) {
+    if (each === state.selected) each.item.setAttribute('aria-current', 'true');
+    else each.item.removeAttribute('aria-current');
+  }
+  els.open.href = state.selected ? urlOf(state.selected.file) : '#';
+  els.open.setAttribute('aria-disabled', String(!state.selected));
+  const hash = state.selected ? `#${encodeURIComponent(state.selected.id)}` : '';
+  if (location.hash !== hash) history.replaceState(null, '', hash || location.pathname + location.search);
+  if (state.selected && !state.selected.li.hidden) state.selected.item.scrollIntoView({ block: 'nearest' });
+  if (state.selected && fitIt) fit(state.selected, { animate });
+  else paintMarks();
+}
+
+// #<id>, or the design's file (relative to the designs folder, with or without .html).
+function designFromHash() {
+  const name = decodeURIComponent(location.hash.slice(1));
+  if (!name) return null;
+  const bare = (file) => file.replace(/\.html?(?=$|\?)/i, '');
+  return state.designs.find((d) => d.id === name)
+    || state.designs.find((d) => [d.file, bare(d.file)].some((file) => file === name || file.endsWith(`/${name}`)))
+    || null;
+}
+
+function step(delta) {
+  const designs = shown();
+  const count = designs.length;
+  if (!count) return;
+  const at = designs.indexOf(state.selected);
+  const next = at < 0 ? (delta > 0 ? 0 : count - 1) : (at + delta + count) % count;
+  select(designs[next], { fit: true });
+}
+
+function setHover(design) {
+  if (state.hover === design) return;
+  state.hover = design;
+  paintMarks();
+}
+
+// The design under a point of the screen: its frame, or its name just above it.
+function hit(point) {
+  const { x, y, z } = state.view;
+  const cx = (point.x - x) / z;
+  const cy = (point.y - y) / z;
+  for (let i = state.designs.length - 1; i >= 0; i--) {
+    const d = state.designs[i];
+    const top = d.y - (d.label.hidden ? 0 : NAME_SPACE / z);
+    if (cx >= d.x && cx <= d.x + d.w && cy >= top && cy <= d.y + d.h) return d;
+  }
+  return null;
+}
+
+function openSelected() {
+  if (state.selected) window.open(urlOf(state.selected.file), '_blank', 'noopener');
+}
+
+// ---------------------------------------------------------------- panels and messages
+
+function toggleList(show = els.app.classList.contains('is-collapsed')) {
+  // The canvas keeps its place on screen while the list comes and goes.
+  const before = els.viewport.getBoundingClientRect().left;
+  els.app.classList.toggle('is-collapsed', !show);
+  const after = els.viewport.getBoundingClientRect().left;
+  els.toggleList.setAttribute('aria-pressed', String(show));
+  writeStore('list', show);
+  setView({ ...state.view, x: state.view.x + before - after });
+}
+
+function toggleHelp(show = els.help.hidden) {
+  els.help.hidden = !show;
+  els.helpToggle.setAttribute('aria-expanded', String(show));
+}
+
+let toastTimer = 0;
+function toast(text) {
+  els.toast.textContent = text;
+  els.toast.classList.add('is-on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => els.toast.classList.remove('is-on'), 1800);
+}
+
+function showNotice(title, text) {
+  els.noticeTitle.textContent = title;
+  els.noticeText.textContent = text;
+  els.notice.hidden = false;
+}
+
+// "A", "A and B", "A, B and 3 more".
+function names(designs) {
+  const titles = designs.map((d) => d.title);
+  if (titles.length <= 2) return titles.join(' and ');
+  return `${titles.slice(0, 2).join(', ')} and ${titles.length - 2} more`;
+}
+
+// ---------------------------------------------------------------- reloading
+
+function reloadFrame(design) {
+  try {
+    design.iframe.contentWindow.location.reload();
+  } catch {
+    design.iframe.src = urlOf(design.file);
+  }
+}
+
+// Whether a design's page loaded the file: its stylesheets, scripts, images, fonts, fetches.
+function uses(design, path) {
+  let entries;
+  try {
+    entries = design.iframe.contentWindow.performance.getEntriesByType('resource');
+  } catch {
+    return true; // can't tell: reload it
+  }
+  if (entries.length >= 250) return true; // the browser stops listing at 250: can't tell
+  return entries.some((entry) => {
     try {
-      const res = await fetch('/api/designs');
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      this.manifest = await res.json();
-
-      this.projectTitleEl.textContent = this.manifest.title || 'Design Explorer';
-
-      // Flatten artboards
-      this.artboards = [];
-      if (Array.isArray(this.manifest.sections)) {
-        for (const section of this.manifest.sections) {
-          if (Array.isArray(section.artboards)) {
-            for (const board of section.artboards) {
-              this.artboards.push({
-                ...board,
-                sectionId: section.id,
-                sectionName: section.name
-              });
-            }
-          }
-        }
-      }
-
-      this.renderSidebar();
-      this.renderCanvas();
-
-      // Place the view after the first layout only, so a rebuild keeps the user's pan and zoom:
-      // on the artboard named in the URL (#<id>), else on everything
-      if (!this.hasFitted) {
-        this.hasFitted = true;
-        setTimeout(() => {
-          const id = this.artboardIdFromHash();
-          if (id) this.focusArtboard(id);
-          else this.fitAll();
-        }, 150);
-      }
-    } catch (err) {
-      console.error('Failed loading designs manifest:', err);
-      this.projectTitleEl.textContent = 'Error loading designs';
+      const url = new URL(entry.name);
+      return url.origin === location.origin && decodeURIComponent(url.pathname) === path;
+    } catch {
+      return false;
     }
+  });
+}
+
+function rebuild(manifest) {
+  const selected = state.selected?.id;
+  build(manifest);
+  select(state.designs.find((d) => d.id === selected) || null);
+}
+
+// What a new canvas changed, from the designs before and after it.
+function changesBetween(before, after) {
+  const added = after.filter((d) => !before.some((b) => b.id === d.id));
+  const removed = before.filter((b) => !after.some((d) => d.id === b.id));
+  if (added.length && !removed.length) return `New: ${names(added)}`;
+  if (removed.length && !added.length) return `Removed: ${names(removed)}`;
+  if (added.length) return `${added.length} new, ${removed.length} removed`;
+  return 'Canvas updated';
+}
+
+// message: a text, or nothing to describe the change.
+async function rebuildIfChanged(message) {
+  let manifest;
+  try {
+    manifest = await fetchManifest();
+  } catch {
+    return false;
+  }
+  if (JSON.stringify(manifest) === state.manifest) return false;
+  const before = state.designs.map(({ id, title }) => ({ id, title }));
+  rebuild(manifest);
+  toast(message || changesBetween(before, state.designs));
+  return true;
+}
+
+async function reloadAll() {
+  let manifest;
+  try {
+    manifest = await fetchManifest();
+  } catch (err) {
+    toast(`Could not read the designs (${err.message})`);
+    return;
+  }
+  if (JSON.stringify(manifest) !== state.manifest) rebuild(manifest);
+  else state.designs.forEach(reloadFrame);
+  toast('Designs reloaded');
+}
+
+const pending = { files: new Set(), manifest: false, folders: false };
+let changeTimer = 0;
+
+function onChange(change) {
+  if (change.type === 'manifest') pending.manifest = true;
+  else if (change.type === 'folder') pending.folders = true;
+  else if (change.file) pending.files.add(change.file);
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(applyChanges, CHANGE_MS);
+}
+
+async function applyChanges() {
+  const files = [...pending.files];
+  const { manifest: manifestChanged, folders: foldersChanged } = pending;
+  pending.files.clear();
+  pending.manifest = false;
+  pending.folders = false;
+
+  // A new canvas loads every design afresh, so nothing else is left to do.
+  if (manifestChanged && await rebuildIfChanged('designs.json changed: canvas rebuilt')) return;
+  // Without designs.json every HTML file is a design (and its <title> its name); with it, an
+  // HTML file that isn't on the canvas may be one just added to it. A folder added or removed
+  // may bring or take a whole group of them.
+  const pages = files.filter((file) => /\.html?$/i.test(file));
+  if (foldersChanged || (pages.length && (state.autoDiscovered || pages.some((file) => !state.designs.some((d) => d.path === `/${file}`))))) {
+    if (await rebuildIfChanged()) return;
   }
 
-  getFilteredSections() {
-    if (!this.manifest || !Array.isArray(this.manifest.sections)) return [];
+  const paths = files.map((file) => `/${file}`);
+  const frames = state.designs.filter((d) => paths.includes(d.path) || paths.some((path) => uses(d, path)));
+  if (!frames.length) return;
+  // Name the shared files the designs use (a stylesheet, a script), not whatever else was saved.
+  // Asked before reloading: a reloading page forgets what it loaded.
+  const shared = paths
+    .filter((path) => !state.designs.some((d) => d.path === path) && frames.some((d) => uses(d, path)))
+    .map((path) => path.slice(1));
+  frames.forEach(reloadFrame);
+  toast(shared.length
+    ? `${shared.join(', ')} changed: ${frames.length === 1 ? frames[0].title : `${frames.length} designs`} reloaded`
+    : `Updated: ${names(frames)}`);
+}
 
-    return this.manifest.sections.map((section) => {
-      const filteredBoards = (section.artboards || []).filter((board) => {
-        // Category filter
-        if (this.currentCategory !== 'all') {
-          const cat = (board.category || 'responsive').toLowerCase();
-          if (cat !== this.currentCategory) return false;
-        }
-
-        // Search query filter
-        if (this.searchQuery) {
-          const matchTitle = (board.title || '').toLowerCase().includes(this.searchQuery);
-          const matchFile = (board.file || '').toLowerCase().includes(this.searchQuery);
-          const matchDesc = (board.description || '').toLowerCase().includes(this.searchQuery);
-          const matchTags = (board.tags || []).some((t) => t.toLowerCase().includes(this.searchQuery));
-          if (!matchTitle && !matchFile && !matchDesc && !matchTags) return false;
-        }
-
-        return true;
-      });
-
-      return {
-        ...section,
-        artboards: filteredBoards
-      };
-    }).filter((section) => section.artboards.length > 0);
-  }
-
-  renderSidebar() {
-    const sections = this.getFilteredSections();
-    let totalCount = 0;
-    this.sidebarTree.innerHTML = '';
-
-    for (const section of sections) {
-      const sectionEl = document.createElement('div');
-      sectionEl.className = 'sidebar-section';
-
-      const headerEl = document.createElement('div');
-      headerEl.className = 'sidebar-section-title';
-      headerEl.innerHTML = `
-        <span>${escapeHtml(section.name)}</span>
-        <span>${section.artboards.length}</span>
-      `;
-      sectionEl.appendChild(headerEl);
-
-      const itemsEl = document.createElement('div');
-      itemsEl.className = 'sidebar-items';
-
-      for (const board of section.artboards) {
-        totalCount++;
-        const itemEl = document.createElement('div');
-        itemEl.className = 'sidebar-item';
-        itemEl.dataset.id = board.id;
-        if (board.id === this.activeArtboardId) itemEl.classList.add('active');
-
-        itemEl.innerHTML = `
-          <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(board.title || board.id)}</span>
-          <span class="sidebar-item-badge">${board.width || 'auto'}×${board.height || 'auto'}</span>
-        `;
-
-        itemEl.addEventListener('click', () => {
-          this.focusArtboard(board.id);
-        });
-
-        itemsEl.appendChild(itemEl);
-      }
-
-      sectionEl.appendChild(itemsEl);
-      this.sidebarTree.appendChild(sectionEl);
-    }
-
-    this.artboardCountEl.textContent = `${totalCount} artboard${totalCount === 1 ? '' : 's'}`;
-  }
-
-  renderCanvas() {
-    const sections = this.getFilteredSections();
-    this.content.innerHTML = '';
-
-    if (sections.length === 0) {
-      this.content.innerHTML = `
-        <div style="padding: 100px; text-align: center; color: var(--text-muted);">
-          <div style="font-size: 32px; margin-bottom: 12px;">🔍</div>
-          <div style="font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">No Artboards Found</div>
-          <div style="font-size: 13px;">Try adjusting your filter or search criteria, or add HTML files to the project directory.</div>
-        </div>
-      `;
-      this.applyTransform();
-      return;
-    }
-
-    for (const section of sections) {
-      const sectionContainer = document.createElement('section');
-      sectionContainer.className = 'canvas-section';
-      sectionContainer.id = `section-${section.id}`;
-
-      const secHeader = document.createElement('div');
-      secHeader.className = 'canvas-section-header';
-      secHeader.innerHTML = `
-        <h2 class="canvas-section-title">${escapeHtml(section.name)}</h2>
-        ${section.description ? `<p class="canvas-section-desc">${escapeHtml(section.description)}</p>` : ''}
-      `;
-      sectionContainer.appendChild(secHeader);
-
-      const flow = document.createElement('div');
-      flow.className = 'artboards-flow';
-
-      for (const board of section.artboards) {
-        const frame = this.createArtboardFrame(board);
-        flow.appendChild(frame);
-      }
-
-      sectionContainer.appendChild(flow);
-      this.content.appendChild(sectionContainer);
-    }
-
-    this.applyTransform();
-  }
-
-  createArtboardFrame(board) {
-    const frame = document.createElement('div');
-    frame.className = 'artboard-frame';
-    frame.id = `frame-${board.id}`;
-
-    const width = board.width || 1200;
-    const height = board.height || 800;
-    const category = board.category || 'responsive';
-
-    const header = document.createElement('div');
-    header.className = 'artboard-header';
-    header.innerHTML = `
-      <div class="artboard-title-group">
-        <span class="artboard-badge badge-${category}">${category}</span>
-        <span class="artboard-title" title="${escapeHtml(board.title)}">${escapeHtml(board.title)}</span>
-      </div>
-      <div class="artboard-actions">
-        <span class="artboard-dimensions">${width} × ${height}</span>
-        <button class="artboard-btn btn-reload-frame" title="Reload Artboard">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M23 4v6h-6"/>
-            <path d="M1 20v-6h6"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-        </button>
-        <a href="/${board.file}" target="_blank" rel="noopener" class="artboard-btn" title="Open Standalone in New Tab">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-            <polyline points="15 3 21 3 21 9"/>
-            <line x1="10" y1="14" x2="21" y2="3"/>
-          </svg>
-        </a>
-      </div>
-    `;
-
-    const body = document.createElement('div');
-    body.className = 'artboard-body';
-    body.style.width = `${width}px`;
-    body.style.height = `${height}px`;
-
-    const iframe = document.createElement('iframe');
-    iframe.className = 'artboard-iframe';
-    iframe.dataset.file = board.file;
-    iframe.dataset.id = board.id;
-    iframe.src = withCacheBust(board.file, this.cacheBustCounter);
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-
-    // Auto-measuring support for same-origin artboards
-    iframe.addEventListener('load', () => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow.document;
-        if (doc && doc.body) {
-          // If board has no fixed height, auto-fit height
-          if (!board.height) {
-            const docHeight = doc.documentElement.scrollHeight || doc.body.scrollHeight;
-            if (docHeight > 100) {
-              body.style.height = `${docHeight}px`;
-            }
-          }
-        }
-      } catch (_) {
-        // Cross-origin fallback
-      }
-    });
-
-    body.appendChild(iframe);
-    frame.appendChild(header);
-    frame.appendChild(body);
-
-    // Frame Reload Button
-    header.querySelector('.btn-reload-frame').addEventListener('click', () => {
-      this.reloadIframe(iframe);
-    });
-
-    // Frame selection click
-    frame.addEventListener('click', (e) => {
-      if (!e.target.closest('a, button')) {
-        document.querySelectorAll('.artboard-frame').forEach((f) => f.classList.remove('focused'));
-        frame.classList.add('focused');
-        this.activeArtboardId = board.id;
-        document.querySelectorAll('.sidebar-item').forEach((item) => {
-          item.classList.toggle('active', item.dataset.id === board.id);
-        });
-      }
-    });
-
-    return frame;
-  }
-
-  reloadIframe(iframe) {
-    this.cacheBustCounter++;
-    iframe.src = withCacheBust(iframe.dataset.file, this.cacheBustCounter);
-  }
-
-  // --- Live Reload Connection (SSE) ---
-
-  connectLiveReload() {
-    if (this.eventSource) {
-      this.eventSource.close();
-    }
-
+function connect() {
+  const source = new EventSource('/api/events');
+  let lost = false;
+  source.addEventListener('connected', () => {
+    setLive(true);
+    // Back after the server stopped: files may have changed meanwhile.
+    if (lost) reloadAll();
+    lost = false;
+  });
+  source.addEventListener('change', (event) => {
     try {
-      this.eventSource = new EventSource('/api/events');
-
-      this.eventSource.addEventListener('connected', () => {
-        this.liveIndicator.classList.remove('disconnected');
-        this.liveIndicator.querySelector('.live-text').textContent = 'Live';
-      });
-
-      this.eventSource.addEventListener('change', (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          this.handleFileChange(data);
-        } catch (err) {
-          console.warn('[htmlboard] Error parsing change event:', err);
-        }
-      });
-
-      this.eventSource.onerror = () => {
-        this.liveIndicator.classList.add('disconnected');
-        this.liveIndicator.querySelector('.live-text').textContent = 'Offline';
-      };
-    } catch (err) {
-      console.warn('[htmlboard] SSE connection failed:', err);
-      this.liveIndicator.classList.add('disconnected');
+      onChange(JSON.parse(event.data));
+    } catch {
+      // Not ours.
     }
-  }
+  });
+  // EventSource keeps trying to reconnect by itself.
+  source.addEventListener('error', () => {
+    lost = true;
+    setLive(false);
+  });
+}
 
-  handleFileChange(data) {
-    if (data.type === 'manifest') {
-      // Manifest changed, reload all designs
-      this.loadManifest();
+function setLive(on) {
+  els.live.hidden = false;
+  els.live.classList.toggle('is-off', !on);
+  els.live.textContent = on ? 'Live' : 'Offline';
+  els.live.title = on
+    ? 'Watching the files: saved changes show up by themselves'
+    : 'Lost the server: start htmlboard again and the canvas reconnects';
+}
+
+// ---------------------------------------------------------------- input
+
+const pointers = new Map();
+let press = null;   // one pointer down: a click, or a drag that pans
+let pinch = null;   // two pointers down
+let lastClick = { time: 0, design: null };
+let spaceDown = false;
+
+function local(event) {
+  const box = els.viewport.getBoundingClientRect();
+  return { x: event.clientX - box.left, y: event.clientY - box.top };
+}
+
+function onCanvas(event) {
+  return !event.target.closest('.toolbar, .help, .notice');
+}
+
+function wire() {
+  const { viewport } = els;
+
+  viewport.addEventListener('wheel', (event) => {
+    if (!onCanvas(event)) return;
+    event.preventDefault();
+    state.autoFit = null;
+    cancelAnimationFrame(animation);
+    let dx = event.deltaX;
+    let dy = event.deltaY;
+    if (event.deltaMode === 1) {
+      dx *= 16;
+      dy *= 16;
+    } else if (event.deltaMode === 2) {
+      dx *= viewport.clientWidth;
+      dy *= viewport.clientHeight;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      // Pinches arrive as Ctrl + small deltas; a mouse wheel notch is capped to one gentle step.
+      const point = local(event);
+      setView(zoomedAt(point.x, point.y, state.view.z * Math.exp(-clamp(dy, -50, 50) / 100)));
+    } else {
+      if (event.shiftKey && !dx) {
+        dx = dy;
+        dy = 0;
+      }
+      setView({ ...state.view, x: state.view.x - dx, y: state.view.y - dy });
+    }
+  }, { passive: false });
+
+  // Ctrl + scroll and pinches anywhere else (the list, the toolbar) would zoom the whole page.
+  document.addEventListener('wheel', (event) => {
+    if (event.ctrlKey || event.metaKey) event.preventDefault();
+  }, { passive: false });
+
+  // Safari reports trackpad pinches as gestures instead of Ctrl + wheel.
+  let gestureZoom = 1;
+  document.addEventListener('gesturestart', (event) => event.preventDefault());
+  viewport.addEventListener('gesturestart', (event) => {
+    event.preventDefault();
+    gestureZoom = state.view.z;
+  });
+  viewport.addEventListener('gesturechange', (event) => {
+    event.preventDefault();
+    state.autoFit = null;
+    const point = local(event);
+    setView(zoomedAt(point.x, point.y, gestureZoom * event.scale));
+  });
+
+  viewport.addEventListener('pointerdown', (event) => {
+    if (!onCanvas(event) || (event.button !== 0 && event.button !== 1)) return;
+    event.preventDefault(); // no text selection, no middle-click autoscroll
+    if (document.activeElement === els.search) els.search.blur();
+    viewport.focus({ preventScroll: true });
+    viewport.setPointerCapture(event.pointerId);
+    state.autoFit = null;
+    const point = local(event);
+    pointers.set(event.pointerId, point);
+    if (pointers.size === 2) {
+      cancelAnimationFrame(animation);
+      const [a, b] = [...pointers.values()];
+      pinch = {
+        distance: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        middle: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        view: { ...state.view },
+      };
+      press = null;
+      viewport.classList.remove('is-panning');
       return;
     }
+    if (pointers.size > 2) return;
+    press = { id: event.pointerId, ...point, moved: false, pan: event.button === 1 || spaceDown, touch: event.pointerType !== 'mouse' };
+  });
 
-    // A specific file changed: reload the frames showing it (ignoring their query strings)
-    const changedFile = (data.file || '').replace(/\\/g, '/');
-    const iframes = document.querySelectorAll('.artboard-iframe');
-    let reloadedAny = false;
-
-    iframes.forEach((iframe) => {
-      const frameFile = (iframe.dataset.file || '').replace(/\\/g, '/').split('?')[0];
-      if (frameFile === changedFile) {
-        this.reloadIframe(iframe);
-        reloadedAny = true;
-      }
-    });
-
-    if (reloadedAny) return;
-
-    if (data.isHtml) {
-      // An HTML file that isn't on the canvas yet may be a new artboard
-      this.loadManifest();
-    } else {
-      // A shared file (CSS, script, image, font) may be used by any artboard
-      iframes.forEach((iframe) => this.reloadIframe(iframe));
+  viewport.addEventListener('pointermove', (event) => {
+    const point = local(event);
+    if (pointers.has(event.pointerId)) pointers.set(event.pointerId, point);
+    if (pinch) {
+      if (pointers.size < 2) return;
+      const [a, b] = [...pointers.values()];
+      const z = clamp((pinch.view.z * Math.hypot(a.x - b.x, a.y - b.y)) / pinch.distance, MIN_ZOOM, MAX_ZOOM);
+      // The canvas point under the fingers' starting middle follows their middle now.
+      const cx = (pinch.middle.x - pinch.view.x) / pinch.view.z;
+      const cy = (pinch.middle.y - pinch.view.y) / pinch.view.z;
+      setView({ x: (a.x + b.x) / 2 - cx * z, y: (a.y + b.y) / 2 - cy * z, z });
+      return;
     }
+    if (press && event.pointerId === press.id) {
+      if (!press.moved && Math.hypot(point.x - press.x, point.y - press.y) > DRAG_SLOP) {
+        // The drag starts here, from wherever a glide has got to.
+        cancelAnimationFrame(animation);
+        Object.assign(press, { moved: true, view: { ...state.view }, x: point.x, y: point.y });
+        viewport.classList.add('is-panning');
+        setHover(null);
+      }
+      if (press.moved) setView({ ...state.view, x: press.view.x + point.x - press.x, y: press.view.y + point.y - press.y });
+      return;
+    }
+    if (event.pointerType === 'mouse' && !pointers.size && onCanvas(event)) setHover(hit(point));
+  });
+
+  const release = (event) => {
+    if (!pointers.delete(event.pointerId)) return;
+    if (pinch) {
+      if (!pointers.size) pinch = null;
+      return;
+    }
+    if (!press || event.pointerId !== press.id) return;
+    const done = press;
+    press = null;
+    viewport.classList.remove('is-panning');
+    if (done.moved || done.pan || event.type === 'pointercancel') return;
+    const design = hit(local(event));
+    const now = performance.now();
+    if (done.touch && design && design === lastClick.design && now - lastClick.time < DOUBLE_MS) {
+      lastClick = { time: 0, design: null };
+      select(design, { fit: true });
+      return;
+    }
+    lastClick = { time: now, design };
+    select(design);
+  };
+  viewport.addEventListener('dblclick', (event) => {
+    if (!onCanvas(event)) return;
+    const design = hit(local(event));
+    if (design) select(design, { fit: true });
+  });
+  viewport.addEventListener('pointerup', release);
+  viewport.addEventListener('pointercancel', release);
+  viewport.addEventListener('pointerleave', () => {
+    if (!pointers.size) setHover(null);
+  });
+
+  els.search.addEventListener('input', () => search(els.search.value));
+  els.search.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (els.search.value) {
+        els.search.value = '';
+        search('');
+      } else {
+        els.search.blur();
+      }
+    } else if (event.key === 'Enter') {
+      // The first design found, fitted.
+      event.preventDefault();
+      const [first] = shown();
+      if (first) {
+        state.autoFit = null;
+        select(first, { fit: true });
+      }
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    // Typing in the search (it has its own keys above) is not a shortcut.
+    if (event.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    const onControl = event.target.closest?.('button, a');
+    const key = event.key;
+    if (key === ' ' || event.code === 'Space') {
+      if (onControl) return;
+      event.preventDefault();
+      spaceDown = true;
+      viewport.classList.add('is-space');
+      return;
+    }
+    let handled = true;
+    if ((event.shiftKey && event.code === 'Digit1') || key === 'f' || key === 'F') fit('all');
+    else if (event.shiftKey && event.code === 'Digit2') {
+      if (state.selected) fit(state.selected);
+    } else if ((event.shiftKey && event.code === 'Digit0') || key === '0') actualSize();
+    else if (key === '+' || key === '=' || event.code === 'NumpadAdd') zoomBy(ZOOM_STEP);
+    else if (key === '-' || key === '_' || event.code === 'NumpadSubtract') zoomBy(1 / ZOOM_STEP);
+    else if (key === 'ArrowRight' || key === 'ArrowDown') step(1);
+    else if (key === 'ArrowLeft' || key === 'ArrowUp') step(-1);
+    else if (key === 'Escape') {
+      if (!els.help.hidden) toggleHelp(false);
+      else if (state.selected) select(null);
+      else if (els.search.value) {
+        els.search.value = '';
+        search('');
+      }
+    } else if (key === 'Enter' && !onControl) openSelected();
+    else if (key === 'r' || key === 'R') reloadAll();
+    else if (key === '/') {
+      if (els.app.classList.contains('is-collapsed')) toggleList(true);
+      els.search.focus();
+      els.search.select();
+    } else if (key === '?') toggleHelp();
+    else if (key === '\\' || key === '[' || key === ']') toggleList();
+    else handled = false;
+    if (handled) {
+      event.preventDefault();
+      state.autoFit = null;
+    }
+  });
+
+  document.addEventListener('keyup', (event) => {
+    if (event.key === ' ' || event.code === 'Space') {
+      spaceDown = false;
+      viewport.classList.remove('is-space');
+    }
+  });
+
+  window.addEventListener('blur', () => {
+    spaceDown = false;
+    viewport.classList.remove('is-space');
+  });
+
+  window.addEventListener('resize', () => {
+    if (state.autoFit) fit(state.autoFit, { animate: false });
+    else paint();
+  });
+
+  window.addEventListener('hashchange', () => {
+    const design = designFromHash();
+    if (design && design !== state.selected) {
+      state.autoFit = null;
+      select(design, { fit: true });
+    }
+  });
+
+  $('zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
+  $('zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
+  els.zoom.addEventListener('click', actualSize);
+  $('fit-all').addEventListener('click', () => fit('all'));
+  $('reload').addEventListener('click', reloadAll);
+  els.toggleList.addEventListener('click', () => toggleList());
+  els.helpToggle.addEventListener('click', () => toggleHelp());
+  for (const id of ['zoom-in', 'zoom-out', 'zoom-reset', 'fit-all']) {
+    $(id).addEventListener('click', () => {
+      state.autoFit = null;
+    });
   }
 }
 
-function withCacheBust(file, counter) {
-  return `/${file}${file.includes('?') ? '&' : '?'}t=${counter}`;
+// ---------------------------------------------------------------- start
+
+async function start() {
+  let manifest;
+  try {
+    const [designs, health] = await Promise.all([
+      fetchManifest(),
+      fetch('/api/health', { cache: 'no-store' }).then((res) => res.json()).catch(() => ({})),
+    ]);
+    manifest = designs;
+    if (health.dir) storePrefix = `htmlboard:${health.dir}:`;
+  } catch (err) {
+    showNotice('Could not load the designs', `${err.message}. Is htmlboard still running?`);
+    return;
+  }
+
+  const list = readStore('list');
+  if (list === false || (list === null && innerWidth < 720)) {
+    els.app.classList.add('is-collapsed');
+    els.toggleList.setAttribute('aria-pressed', 'false');
+  }
+  els.viewport.tabIndex = -1;
+  build(manifest);
+  wire();
+
+  const design = designFromHash();
+  const saved = readStore('view');
+  if (design) {
+    state.autoFit = design;
+    select(design, { fit: true, animate: false });
+  } else if (saved && [saved.x, saved.y, saved.z].every(Number.isFinite) && saved.z > 0) {
+    setView({ x: saved.x, y: saved.y, z: clamp(saved.z, MIN_ZOOM, MAX_ZOOM) });
+  } else {
+    state.autoFit = 'all';
+    fit('all', { animate: false });
+  }
+
+  connect();
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Initialize Explorer on DOM load
-window.addEventListener('DOMContentLoaded', () => {
-  window.__htmlboardExplorer = new HtmlBoardExplorer();
-});
+start();

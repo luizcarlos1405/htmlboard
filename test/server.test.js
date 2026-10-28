@@ -50,7 +50,7 @@ describe('HtmlBoard Core Functionality', () => {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.ok(html.includes('<title>HtmlBoard'));
-    assert.ok(html.includes('id="canvas-viewport"'));
+    assert.ok(html.includes('id="viewport"'));
   });
 
   test('GET /api/designs returns the designs manifest JSON', async () => {
@@ -80,6 +80,12 @@ describe('HtmlBoard Core Functionality', () => {
     const res = await fetch(`${serverInstance.url}/__explorer/explorer.css`);
     assert.equal(res.status, 200);
     const css = await res.text();
-    assert.ok(css.includes('HtmlBoard Explorer Theme'));
+    assert.ok(css.includes('HtmlBoard explorer'));
+  });
+
+  test('GET /__explorer/fonts/inter.woff2 serves the bundled font', async () => {
+    const res = await fetch(`${serverInstance.url}/__explorer/fonts/inter.woff2`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'font/woff2');
   });
 });

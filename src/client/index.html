@@ -1,191 +1,96 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>HtmlBoard — Design Explorer</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231C1C1E'/%3E%3Crect x='7' y='8' width='8' height='16' rx='1.5' fill='%23EDEDEB'/%3E%3Crect x='18' y='8' width='7' height='9' rx='1.5' fill='%233D9DFF'/%3E%3C/svg%3E">
+  <title>HtmlBoard</title>
+  <!-- Every design of the project side by side on one canvas you can pan and zoom, like a Figma
+       page. The server lists the designs at /api/designs and pushes saved changes at /api/events.
+       #<design id> opens on that design. -->
   <link rel="stylesheet" href="/__explorer/explorer.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-</head>
-<body class="theme-dark">
-  <div id="app">
-    <!-- Top Navigation Toolbar -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <button id="btn-toggle-sidebar" class="btn-icon" title="Toggle Sidebar ([)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-            <line x1="9" y1="3" x2="9" y2="21"/>
-          </svg>
-        </button>
-
-        <div class="brand">
-          <div class="brand-logo">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="7" height="7" rx="1.5" fill="#6366f1"/>
-              <rect x="14" y="3" width="7" height="7" rx="1.5" fill="#818cf8"/>
-              <rect x="3" y="14" width="7" height="7" rx="1.5" fill="#a855f7"/>
-              <rect x="14" y="14" width="7" height="7" rx="1.5" fill="#ec4899"/>
-            </svg>
-          </div>
-          <span class="brand-name">HtmlBoard</span>
-        </div>
-
-        <div class="project-pill" id="project-title-pill">
-          <span id="project-title">Loading...</span>
-        </div>
-      </div>
-
-      <div class="topbar-center">
-        <!-- Filter Category Tabs -->
-        <div class="filter-tabs" id="filter-tabs">
-          <button class="filter-tab active" data-category="all">All</button>
-          <button class="filter-tab" data-category="desktop">Desktop</button>
-          <button class="filter-tab" data-category="mobile">Mobile</button>
-          <button class="filter-tab" data-category="tablet">Tablet</button>
-          <button class="filter-tab" data-category="components">Components</button>
-        </div>
-      </div>
-
-      <div class="topbar-right">
-        <!-- Search bar -->
-        <div class="search-box">
-          <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input type="text" id="search-input" placeholder="Search boards... (/)" autocomplete="off" spellcheck="false">
-          <kbd class="search-kbd">/</kbd>
-        </div>
-
-        <!-- Canvas Zoom Controls -->
-        <div class="zoom-controls">
-          <button id="btn-zoom-out" class="btn-icon" title="Zoom Out (-)">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
-          <span id="zoom-level" class="zoom-level-text" title="Click to reset (0)">100%</span>
-          <button id="btn-zoom-in" class="btn-icon" title="Zoom In (+)">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="12" y1="5" x2="12" y2="19"/>
-              <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
-          <button id="btn-zoom-fit" class="btn-text" title="Fit to Screen (F)">
-            Fit All
-          </button>
-        </div>
-
-        <!-- Live Status Indicator -->
-        <div class="live-indicator" id="live-indicator" title="Connected for live auto-reload">
-          <span class="live-dot"></span>
-          <span class="live-text">Live</span>
-        </div>
-
-        <!-- Help / Shortcuts -->
-        <button id="btn-shortcuts" class="btn-icon" title="Keyboard Shortcuts (?)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-        </button>
-      </div>
-    </header>
-
-    <!-- Main Workspace Area -->
-    <div class="workspace">
-      <!-- Collapsible Sidebar -->
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-          <span class="sidebar-heading">Navigation</span>
-          <span class="sidebar-count" id="artboard-count">0 artboards</span>
-        </div>
-        <div class="sidebar-tree" id="sidebar-tree">
-          <!-- Populated by explorer.js -->
-        </div>
-      </aside>
-
-      <!-- Infinite Canvas Viewport -->
-      <main class="canvas-viewport" id="canvas-viewport">
-        <!-- Interactive Canvas Stage -->
-        <div class="canvas-stage" id="canvas-stage">
-          <!-- Background Grid layer -->
-          <div class="canvas-grid" id="canvas-grid"></div>
-
-          <!-- Dynamic Artboard Content Container -->
-          <div class="canvas-content" id="canvas-content">
-            <!-- Sections & Artboards rendered dynamically -->
-          </div>
-        </div>
-
-        <!-- Pan overlay capturing mouse when Space or dragging is active -->
-        <div class="pointer-shield" id="pointer-shield"></div>
-
-        <!-- Canvas Mini HUD Overlay -->
-        <div class="canvas-hud">
-          <span id="hud-coordinates">X: 0 Y: 0</span>
-          <span class="hud-sep">•</span>
-          <span>Hold <kbd>Space</kbd> + Drag to pan</span>
-          <span class="hud-sep">•</span>
-          <span><kbd>Scroll</kbd> to zoom</span>
-        </div>
-      </main>
-    </div>
-
-    <!-- Keyboard Shortcuts Modal -->
-    <div class="modal-backdrop" id="shortcuts-modal">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h2>Keyboard Shortcuts</h2>
-          <button id="btn-close-modal" class="btn-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-        <div class="shortcuts-grid">
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Pan Canvas</span>
-            <div class="shortcut-keys"><kbd>Space</kbd> + <kbd>Drag</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Zoom In / Out</span>
-            <div class="shortcut-keys"><kbd>+</kbd> / <kbd>-</kbd> or <kbd>Ctrl</kbd> + <kbd>Wheel</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Reset Zoom (100%)</span>
-            <div class="shortcut-keys"><kbd>0</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Fit All Artboards</span>
-            <div class="shortcut-keys"><kbd>F</kbd> or <kbd>Shift</kbd> + <kbd>1</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Search Artboards</span>
-            <div class="shortcut-keys"><kbd>/</kbd> or <kbd>⌘</kbd> + <kbd>K</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Toggle Sidebar</span>
-            <div class="shortcut-keys"><kbd>[</kbd> or <kbd>]</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Device Filters</span>
-            <div class="shortcut-keys"><kbd>1</kbd> - <kbd>5</kbd></div>
-          </div>
-          <div class="shortcut-item">
-            <span class="shortcut-desc">Show / Hide Help</span>
-            <div class="shortcut-keys"><kbd>?</kbd></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <script type="module" src="/__explorer/explorer.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="Designs">
+      <header class="sidebar-head">
+        <h1 id="title">Designs</h1>
+        <span class="count" id="count"></span>
+      </header>
+      <div class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="search" placeholder="Search" aria-label="Search the designs" autocomplete="off" spellcheck="false">
+        <kbd aria-hidden="true">/</kbd>
+      </div>
+      <p class="no-match" id="no-match" hidden>No design matches the search.</p>
+      <nav class="list" id="list" aria-label="Designs by section"></nav>
+      <p class="sidebar-hint">Drag or scroll to move, <kbd>Ctrl</kbd> + scroll or pinch to zoom, double-click a design to fit it. <kbd>?</kbd> lists the shortcuts.</p>
+    </aside>
+
+    <main class="viewport" id="viewport" aria-label="Canvas">
+      <div class="world" id="world"></div>
+      <div class="overlay" id="overlay" aria-hidden="true">
+        <div class="outline outline--hover" id="hover" hidden></div>
+        <div class="outline outline--selected" id="selection" hidden></div>
+        <div class="size" id="size" hidden></div>
+      </div>
+
+      <div class="toolbar" role="toolbar" aria-label="Canvas">
+        <button class="tool" type="button" id="toggle-list" title="Show or hide the list (\)" aria-label="Show or hide the list" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+        <span class="sep" aria-hidden="true"></span>
+        <button class="tool" type="button" id="zoom-out" title="Zoom out (−)" aria-label="Zoom out">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+        </button>
+        <button class="tool zoom" type="button" id="zoom-reset" title="Zoom to 100% (Shift + 0)" aria-label="Zoom to 100%">100%</button>
+        <button class="tool" type="button" id="zoom-in" title="Zoom in (+)" aria-label="Zoom in">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>
+        </button>
+        <button class="tool" type="button" id="fit-all" title="Fit everything (Shift + 1)" aria-label="Fit everything">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+        <span class="sep" aria-hidden="true"></span>
+        <a class="tool" id="open" href="#" target="_blank" rel="noopener" title="Open the selected design on its own (Enter)" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+          <span>Open</span>
+        </a>
+        <button class="tool" type="button" id="reload" title="Reload the designs (R)" aria-label="Reload the designs">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></svg>
+        </button>
+        <span class="live" id="live" hidden>Live</span>
+        <button class="tool" type="button" id="help-toggle" title="Shortcuts (?)" aria-label="Shortcuts" aria-expanded="false" aria-controls="help">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+        </button>
+      </div>
+
+      <section class="help" id="help" aria-label="Shortcuts" hidden>
+        <h2>Shortcuts</h2>
+        <dl>
+          <div><dt>Drag, <kbd>Space</kbd> + drag</dt><dd>Move around</dd></div>
+          <div><dt>Scroll (<kbd>Shift</kbd>: sideways)</dt><dd>Move around</dd></div>
+          <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, pinch</dt><dd>Zoom</dd></div>
+          <div><dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom in, out</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>0</kbd></dt><dd>Zoom to 100%</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>1</kbd></dt><dd>Fit everything</dd></div>
+          <div><dt><kbd>Shift</kbd> + <kbd>2</kbd>, double-click</dt><dd>Fit the design</dd></div>
+          <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous, next design</dd></div>
+          <div><dt><kbd>Enter</kbd></dt><dd>Open the design on its own</dd></div>
+          <div><dt><kbd>/</kbd></dt><dd>Search</dd></div>
+          <div><dt><kbd>R</kbd></dt><dd>Reload the designs</dd></div>
+          <div><dt><kbd>\</kbd></dt><dd>Show or hide the list</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></div>
+        </dl>
+      </section>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="notice" id="notice" hidden>
+        <strong id="notice-title"></strong>
+        <p id="notice-text"></p>
+      </div>
+    </main>
+  </div>
 </body>
 </html>
