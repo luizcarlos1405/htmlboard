@@ -432,6 +432,8 @@ body {
   position: absolute;
   top: 0;
   left: 0;
+  /* Grow with the artboards instead of the viewport: each section is one row */
+  width: max-content;
   padding: 80px;
   display: flex;
   flex-direction: column;
@@ -464,13 +466,14 @@ body {
 
 .artboards-flow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-start;
   gap: 48px;
 }
 
 /* Artboard Frame */
 .artboard-frame {
+  flex: none;
   background: var(--bg-card);
   border: 1px solid var(--border-card);
   border-radius: 14px;

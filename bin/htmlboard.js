@@ -17,6 +17,7 @@ function parseArgs(args) {
   const options = {
     port: 3000,
     dir: process.cwd(),
+    root: null,
     open: false,
     init: false,
     help: false,
@@ -48,6 +49,13 @@ function parseArgs(args) {
       }
     } else if (arg.startsWith('--dir=')) {
       options.dir = arg.split('=')[1];
+    } else if (arg === '--root' || arg === '-r') {
+      const next = args[++i];
+      if (next && !next.startsWith('-')) {
+        options.root = next;
+      }
+    } else if (arg.startsWith('--root=')) {
+      options.root = arg.split('=')[1];
     } else if (!arg.startsWith('-')) {
       // Positional directory argument e.g. `htmlboard ./my-designs`
       options.dir = arg;
@@ -70,6 +78,8 @@ Usage:
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
   -d, --dir <path>      Directory to serve HTML artboards from (default: .)
+  -r, --root <path>     Serve files from this parent folder, so artboards can link to
+                        shared files outside the designs folder (default: the designs folder)
   -o, --open            Open the explorer automatically in your default browser
       --init            Scaffold starter designs.json and sample artboards in target directory
   -v, --version         Display HtmlBoard version
@@ -79,6 +89,7 @@ Examples:
   htmlboard                     # Run in current directory on http://localhost:3000
   htmlboard --open              # Run and launch browser automatically
   htmlboard ./designs -p 8080   # Serve ./designs on port 8080
+  htmlboard design --root .     # Artboards in ./design that link to ../css/…
   htmlboard --init              # Initialize starter templates in current folder
   htmlboard skills install      # Add the HtmlBoard skill to this project's agents
 
@@ -257,8 +268,9 @@ async function main() {
   }
 
   try {
-    const { port, url } = await startServer({
+    const { url, rootDir } = await startServer({
       dir: targetDir,
+      root: options.root ? path.resolve(options.root) : undefined,
       port: options.port
     });
 
@@ -267,7 +279,7 @@ async function main() {
   \x1b[90mInfinite Canvas & Design Explorer for HTML Artboards\x1b[0m
 
   \x1b[32m➜\x1b[0m  \x1b[1mLocal:\x1b[0m   \x1b[36m${url}\x1b[0m
-  \x1b[32m➜\x1b[0m  \x1b[1mTarget:\x1b[0m  \x1b[90m${targetDir}\x1b[0m
+  \x1b[32m➜\x1b[0m  \x1b[1mTarget:\x1b[0m  \x1b[90m${targetDir}\x1b[0m${rootDir !== targetDir ? `\n  \x1b[32m➜\x1b[0m  \x1b[1mRoot:\x1b[0m    \x1b[90m${rootDir}\x1b[0m` : ''}
   \x1b[32m➜\x1b[0m  \x1b[1mLive:\x1b[0m    \x1b[32mWatching files for hot live reload\x1b[0m
 
   \x1b[90mPress \x1b[1mCtrl+C\x1b[0m\x1b[90m to stop.\x1b[0m

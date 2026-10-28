@@ -56,6 +56,43 @@ function extractTitleFromHtml(content, fallbackName) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Default frame size for each category */
+const CATEGORY_SIZES = {
+  mobile: [390, 844],
+  tablet: [768, 1024],
+  components: [720, 600],
+  desktop: [1280, 800],
+  responsive: [1200, 800]
+};
+
+/**
+ * Guess an artboard's category from words in its path, then from its width
+ */
+export function inferCategory(file, width) {
+  const lower = file.toLowerCase();
+  if (/mobile|phone|iphone/.test(lower)) return 'mobile';
+  if (/tablet|ipad/.test(lower)) return 'tablet';
+  if (/component|\bui\b|atomic/.test(lower)) return 'components';
+  if (/desktop|laptop|screen/.test(lower)) return 'desktop';
+  if (width) {
+    if (width <= 480) return 'mobile';
+    if (width <= 1024) return 'tablet';
+    return 'desktop';
+  }
+  return 'responsive';
+}
+
+function slugify(text) {
+  return String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/** True when target is base itself or inside it */
+function isInside(base, target) {
+  const rel = path.relative(base, target);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 /**
  * Scan target directory recursively for HTML files to auto-discover
  */
@@ -89,28 +126,8 @@ export function discoverDesigns(baseDir) {
           title = entry.name;
         }
 
-        const lowerRel = relPath.toLowerCase();
-        let category = 'responsive';
-        let width = 1200;
-        let height = 800;
-
-        if (lowerRel.includes('mobile') || lowerRel.includes('phone') || lowerRel.includes('iphone')) {
-          category = 'mobile';
-          width = 390;
-          height = 844;
-        } else if (lowerRel.includes('tablet') || lowerRel.includes('ipad')) {
-          category = 'tablet';
-          width = 768;
-          height = 1024;
-        } else if (lowerRel.includes('component') || lowerRel.includes('ui') || lowerRel.includes('atomic')) {
-          category = 'components';
-          width = 720;
-          height = 600;
-        } else if (lowerRel.includes('desktop') || lowerRel.includes('laptop') || lowerRel.includes('screen')) {
-          category = 'desktop';
-          width = 1280;
-          height = 800;
-        }
+        const category = inferCategory(relPath);
+        const [width, height] = CATEGORY_SIZES[category];
 
         const sectionName = relativePath ? relativePath.replace(/[\\/]/g, ' / ') : 'Root Designs';
 
@@ -157,23 +174,64 @@ export function discoverDesigns(baseDir) {
 }
 
 /**
- * Load designs configuration from designs.json or auto-discover
+ * Fill in what a manifest may leave out, so the explorer always gets
+ * `sections[].{id, name, artboards[].{id, title, file, category}}`.
+ * Accepts the short form too: `sections[].title` and `sections[].designs[]`
+ * with only `{ file, title, width, height }`.
+ * `prefix` is prepended to every file (the designs folder relative to the served root).
  */
-export function loadDesignsManifest(baseDir) {
+export function normalizeManifest(manifest, prefix = '') {
+  const usedIds = new Set();
+  const uniqueId = (wanted) => {
+    let id = wanted || 'artboard';
+    for (let n = 2; usedIds.has(id); n++) id = `${wanted}-${n}`;
+    usedIds.add(id);
+    return id;
+  };
+
+  const sections = (Array.isArray(manifest.sections) ? manifest.sections : []).map((section, i) => {
+    const name = section.name ?? section.title ?? `Section ${i + 1}`;
+    const boards = section.artboards ?? section.designs ?? [];
+    return {
+      ...section,
+      id: section.id ?? (slugify(name) || `section-${i + 1}`),
+      name,
+      artboards: boards.filter((board) => board && board.file).map((board) => {
+        const file = prefix ? path.posix.join(prefix, board.file) : board.file;
+        return {
+          ...board,
+          id: uniqueId(board.id ?? slugify(board.file.replace(/\.html?(?=$|\?)/i, ''))),
+          title: board.title ?? board.file,
+          file,
+          category: board.category ?? inferCategory(board.file.split('?')[0], board.width)
+        };
+      })
+    };
+  });
+
+  return { ...manifest, sections };
+}
+
+/**
+ * Load designs configuration from designs.json or auto-discover.
+ * With `rootDir` (a folder containing baseDir), artboard paths are given relative to it.
+ */
+export function loadDesignsManifest(baseDir, rootDir = baseDir) {
+  const prefix = path.relative(rootDir, baseDir).split(path.sep).join('/');
   const configPath = path.join(baseDir, 'designs.json');
   if (fs.existsSync(configPath)) {
     try {
       const raw = fs.readFileSync(configPath, 'utf8');
       const data = JSON.parse(raw);
       return {
-        ...data,
+        ...normalizeManifest(data, prefix),
         autoDiscovered: false
       };
     } catch (err) {
       console.warn(`[htmlboard] Failed parsing designs.json: ${err.message}. Falling back to auto-discovery.`);
     }
   }
-  return discoverDesigns(baseDir);
+  return normalizeManifest(discoverDesigns(baseDir), prefix);
 }
 
 /**
@@ -202,6 +260,12 @@ export function findAvailablePort(startPort) {
  */
 export function createServer(options = {}) {
   const targetDir = path.resolve(options.dir || process.cwd());
+  // Files are served from rootDir, so artboards can link to shared files above the designs folder
+  const rootDir = path.resolve(options.root || targetDir);
+  if (!isInside(rootDir, targetDir)) {
+    throw new Error(`The designs folder (${targetDir}) must be inside the root (${rootDir})`);
+  }
+  const manifestFile = path.posix.join(path.relative(rootDir, targetDir).split(path.sep).join('/'), 'designs.json');
   const clients = new Set();
 
   const server = http.createServer((req, res) => {
@@ -210,7 +274,7 @@ export function createServer(options = {}) {
 
     // API: Designs Manifest
     if (pathname === '/api/designs') {
-      const manifest = loadDesignsManifest(targetDir);
+      const manifest = loadDesignsManifest(targetDir, rootDir);
       res.writeHead(200, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache, no-store, must-revalidate'
@@ -245,7 +309,7 @@ export function createServer(options = {}) {
     // API: Health status
     if (pathname === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', dir: targetDir }));
+      res.end(JSON.stringify({ status: 'ok', dir: targetDir, root: rootDir }));
       return;
     }
 
@@ -267,16 +331,16 @@ export function createServer(options = {}) {
       return;
     }
 
-    // Serve user artboards and assets from targetDir
+    // Serve user artboards and assets from rootDir
     let safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');
     if (safePath.startsWith('/')) {
       safePath = safePath.slice(1);
     }
 
-    const filePath = path.join(targetDir, safePath);
+    const filePath = path.join(rootDir, safePath);
 
-    // Security check: must stay within targetDir
-    if (!filePath.startsWith(targetDir)) {
+    // Security check: must stay within rootDir
+    if (!isInside(rootDir, filePath)) {
       res.writeHead(403).end('Forbidden');
       return;
     }
@@ -310,16 +374,13 @@ export function createServer(options = {}) {
   let watcher = null;
 
   try {
-    watcher = fs.watch(targetDir, { recursive: true }, (eventType, filename) => {
+    watcher = fs.watch(rootDir, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const normalized = filename.replace(/\\/g, '/');
 
-      // Ignore noise
+      // Ignore noise: hidden files and folders (.git, .vscode, …), dependencies, editor temp files
       if (
-        normalized.includes('node_modules/') ||
-        normalized.includes('.git/') ||
-        normalized.includes('.idea/') ||
-        normalized.includes('.vscode/') ||
+        normalized.split('/').some((part) => part.startsWith('.') || part === 'node_modules') ||
         normalized.endsWith('~') ||
         normalized.endsWith('.tmp')
       ) {
@@ -328,7 +389,7 @@ export function createServer(options = {}) {
 
       clearTimeout(watchDebounceTimer);
       watchDebounceTimer = setTimeout(() => {
-        const isManifest = normalized === 'designs.json';
+        const isManifest = normalized === manifestFile;
         const isHtml = normalized.endsWith('.html');
         const eventData = JSON.stringify({
           type: isManifest ? 'manifest' : 'file',
@@ -349,6 +410,7 @@ export function createServer(options = {}) {
   return {
     server,
     targetDir,
+    rootDir,
     close: () => {
       if (watcher) watcher.close();
       for (const client of clients) {
@@ -370,7 +432,7 @@ export async function startServer(options = {}) {
     console.log(`[htmlboard] Port ${requestedPort} is in use, using ${actualPort}...`);
   }
 
-  const { server, targetDir, close } = createServer(options);
+  const { server, targetDir, rootDir, close } = createServer(options);
 
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -381,6 +443,7 @@ export async function startServer(options = {}) {
         port: actualPort,
         url,
         targetDir,
+        rootDir,
         close
       });
     });

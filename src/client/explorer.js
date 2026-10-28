@@ -11,7 +11,7 @@ class HtmlBoardExplorer {
     this.panX = 80;
     this.panY = 80;
     this.scale = 0.85;
-    this.minScale = 0.1;
+    this.minScale = 0.05;
     this.maxScale = 3.0;
 
     // Interaction State
@@ -158,12 +158,13 @@ class HtmlBoardExplorer {
     if (!visibleCards || visibleCards.length === 0) return;
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const viewportRect = this.viewport.getBoundingClientRect();
 
     visibleCards.forEach((card) => {
       const rect = card.getBoundingClientRect();
-      // Calculate coordinates relative to unscaled canvas content
-      const cardX = (rect.left - this.panX) / this.scale;
-      const cardY = (rect.top - this.panY) / this.scale;
+      // Calculate coordinates relative to unscaled canvas content (the pan is relative to the viewport)
+      const cardX = (rect.left - viewportRect.left - this.panX) / this.scale;
+      const cardY = (rect.top - viewportRect.top - this.panY) / this.scale;
       const cardW = rect.width / this.scale;
       const cardH = rect.height / this.scale;
 
@@ -177,7 +178,6 @@ class HtmlBoardExplorer {
 
     const contentWidth = maxX - minX;
     const contentHeight = maxY - minY;
-    const viewportRect = this.viewport.getBoundingClientRect();
 
     const padding = 80;
     const availWidth = viewportRect.width - padding * 2;
@@ -208,13 +208,14 @@ class HtmlBoardExplorer {
       item.classList.toggle('active', item.dataset.id === artboardId);
     });
 
+    // Frame position in unscaled canvas coordinates (the pan is relative to the viewport, not the page)
+    const viewportRect = this.viewport.getBoundingClientRect();
     const rect = frame.getBoundingClientRect();
-    const frameContentX = (rect.left - this.panX) / this.scale;
-    const frameContentY = (rect.top - this.panY) / this.scale;
+    const frameContentX = (rect.left - viewportRect.left - this.panX) / this.scale;
+    const frameContentY = (rect.top - viewportRect.top - this.panY) / this.scale;
     const frameW = rect.width / this.scale;
     const frameH = rect.height / this.scale;
 
-    const viewportRect = this.viewport.getBoundingClientRect();
     const targetScale = Math.min(Math.max((viewportRect.height * 0.8) / frameH, 0.4), 1.0);
 
     this.scale = targetScale;
@@ -359,8 +360,11 @@ class HtmlBoardExplorer {
       this.renderSidebar();
       this.renderCanvas();
 
-      // Fit after initial layout
-      setTimeout(() => this.fitAll(), 150);
+      // Fit after the first layout only, so a rebuild keeps the user's pan and zoom
+      if (!this.hasFitted) {
+        this.hasFitted = true;
+        setTimeout(() => this.fitAll(), 150);
+      }
     } catch (err) {
       console.error('Failed loading designs manifest:', err);
       this.projectTitleEl.textContent = 'Error loading designs';
@@ -531,7 +535,7 @@ class HtmlBoardExplorer {
     iframe.className = 'artboard-iframe';
     iframe.dataset.file = board.file;
     iframe.dataset.id = board.id;
-    iframe.src = `/${board.file}?t=${this.cacheBustCounter}`;
+    iframe.src = withCacheBust(board.file, this.cacheBustCounter);
     iframe.style.width = '100%';
     iframe.style.height = '100%';
 
@@ -579,8 +583,7 @@ class HtmlBoardExplorer {
 
   reloadIframe(iframe) {
     this.cacheBustCounter++;
-    const baseSrc = iframe.dataset.file;
-    iframe.src = `/${baseSrc}?t=${this.cacheBustCounter}`;
+    iframe.src = withCacheBust(iframe.dataset.file, this.cacheBustCounter);
   }
 
   // --- Live Reload Connection (SSE) ---
@@ -624,24 +627,33 @@ class HtmlBoardExplorer {
       return;
     }
 
-    // A specific file changed
+    // A specific file changed: reload the frames showing it (ignoring their query strings)
     const changedFile = (data.file || '').replace(/\\/g, '/');
     const iframes = document.querySelectorAll('.artboard-iframe');
     let reloadedAny = false;
 
     iframes.forEach((iframe) => {
-      const frameFile = (iframe.dataset.file || '').replace(/\\/g, '/');
-      if (frameFile === changedFile || changedFile.endsWith(frameFile) || frameFile.endsWith(changedFile)) {
+      const frameFile = (iframe.dataset.file || '').replace(/\\/g, '/').split('?')[0];
+      if (frameFile === changedFile) {
         this.reloadIframe(iframe);
         reloadedAny = true;
       }
     });
 
-    // If an HTML file changed that might be new or not currently matching an iframe
-    if (!reloadedAny && data.isHtml) {
+    if (reloadedAny) return;
+
+    if (data.isHtml) {
+      // An HTML file that isn't on the canvas yet may be a new artboard
       this.loadManifest();
+    } else {
+      // A shared file (CSS, script, image, font) may be used by any artboard
+      iframes.forEach((iframe) => this.reloadIframe(iframe));
     }
   }
+}
+
+function withCacheBust(file, counter) {
+  return `/${file}${file.includes('?') ? '&' : '?'}t=${counter}`;
 }
 
 function escapeHtml(str) {

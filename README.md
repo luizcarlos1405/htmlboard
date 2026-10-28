@@ -24,9 +24,9 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 
 ## ✨ Features
 
-- 🛸 **Infinite Canvas**: Smoothly pan, zoom (from 10% to 300%), and fly across dozens of artboards with trackpad or mouse.
+- 🛸 **Infinite Canvas**: Smoothly pan, zoom (from 5% to 300%), and fly across dozens of artboards with trackpad or mouse.
 - ⚡ **Zero Dependencies**: Pure native Node.js ES modules. Runs instantly with `npx htmlboard` without installing heavy packages.
-- 🔄 **State-Preserving Live Reload**: Automatically watches files via Server-Sent Events (SSE). When you or an LLM edit an HTML file, the corresponding artboard updates instantly without resetting your canvas pan/zoom position.
+- 🔄 **State-Preserving Live Reload**: Automatically watches files via Server-Sent Events (SSE). When you or an LLM edit an HTML file, the corresponding artboard updates instantly without resetting your canvas pan/zoom position; editing a shared CSS, script or image reloads them all.
 - 🔍 **Auto-Discovery**: Point HtmlBoard at any folder. It automatically discovers all HTML files, extracts their titles, classifies them by device type, and renders them onto the canvas.
 - 📐 **Declarative Manifest (`designs.json`)**: Optional structured schema to organize artboards into sections, define custom viewports (iPhone, iPad, MacBook, 4K), and attach metadata.
 - 📱 **Multi-Device Categories**: One-click filters for Mobile (390×844), Desktop (1280×820), Tablet (768×1024), and Component kits.
@@ -71,6 +71,8 @@ Usage:
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
   -d, --dir <path>      Directory to serve HTML artboards from (default: .)
+  -r, --root <path>     Serve files from this parent folder, so artboards can link to
+                        shared files outside the designs folder (default: the designs folder)
   -o, --open            Open the explorer automatically in default browser
       --init            Scaffold starter designs.json and sample artboards
   -v, --version         Display HtmlBoard version
@@ -88,6 +90,9 @@ htmlboard --open
 
 # Serve a specific designs directory on port 8080
 htmlboard ./src/designs -p 8080
+
+# Artboards in ./design that link to the site's own ../css and ../js
+htmlboard design --root .
 
 # Initialize sample templates in a new folder
 htmlboard ./my-new-ui --init --open
@@ -135,7 +140,26 @@ Running `install` again after upgrading HtmlBoard updates the skill; a copy you 
 
 ## 📋 The `designs.json` Manifest
 
-While HtmlBoard automatically discovers HTML files, you can add a `designs.json` file in your root folder for custom layout and organization:
+While HtmlBoard automatically discovers HTML files, you can add a `designs.json` file in your designs folder for custom layout and organization. Only `sections[].designs[].file` is required; the short form is enough:
+
+```json
+{
+  "sections": [
+    {
+      "title": "Home",
+      "designs": [
+        { "file": "home-mobile.html", "title": "Home · phone", "width": 390, "height": 844 },
+        { "file": "home-mobile.html?theme=dark", "title": "Home · phone · dark", "width": 390, "height": 844 },
+        { "file": "home-desktop.html", "title": "Home · desktop", "width": 1440 }
+      ]
+    }
+  ]
+}
+```
+
+Sections are rows (top to bottom) and designs run left to right. A `file` may carry a query string, so one HTML file can show several states. Leave `height` out to let the frame grow with its page. `id` and `category` are derived from the file when left out.
+
+The full form adds ids, descriptions, categories (for the toolbar filters) and searchable tags (`name`/`artboards` are synonyms of `title`/`designs`):
 
 ```json
 {

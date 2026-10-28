@@ -7,7 +7,9 @@ export {
   createServer,
   startServer,
   discoverDesigns,
-  loadDesignsManifest
+  loadDesignsManifest,
+  normalizeManifest,
+  inferCategory
 } from './server.js';
 
 export {
