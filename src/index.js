@@ -6,12 +6,17 @@
 export {
   createServer,
   startServer,
+  watchTree
+} from './server.js';
+
+export {
   discoverDesigns,
   loadDesignsManifest,
   normalizeManifest,
   inferCategory,
-  watchTree
-} from './server.js';
+  parseDesignMeta,
+  scanDesigns
+} from './designs.js';
 
 export {
   installSkills,

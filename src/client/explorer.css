@@ -172,6 +172,7 @@ kbd {
 .list .section-desc { margin: -2px 8px 6px; font-size: 12px; line-height: 1.45; color: var(--x-text-soft); }
 
 .list ul { margin: 0; padding: 0; list-style: none; }
+.list section > ul:first-child { margin-top: 12px; } /* a section without a title (the files at the top) */
 
 .item {
   display: flex;

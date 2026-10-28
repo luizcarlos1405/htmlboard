@@ -39,7 +39,7 @@ describe('Manifest short form and --root', () => {
     assert.equal(sections[0].name, 'Céu · Terra');
     assert.equal(sections[0].id, 'ceu-terra');
     assert.deepEqual(sections[0].artboards.map((b) => b.id), ['a', 'a-2']);
-    assert.equal(sections[0].artboards[0].title, 'a.html');
+    assert.equal(sections[0].artboards[0].title, 'a');
     assert.equal(sections[0].artboards[0].category, 'desktop');
   });
 

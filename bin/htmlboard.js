@@ -6,6 +6,7 @@ import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../src/server.js';
 import { installSkills, uninstallSkills } from '../src/skills.js';
+import { planMigration, checkMigration, applyMigration } from '../src/migrate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +75,7 @@ Usage:
   htmlboard [directory] [options]
   npx htmlboard [directory] [options]
   htmlboard skills <install|uninstall> [options]   Teach your AI agent to use HtmlBoard
+  htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -81,7 +83,7 @@ Options:
   -r, --root <path>     Serve files from this parent folder, so artboards can link to
                         shared files outside the designs folder (default: the designs folder)
   -o, --open            Open the explorer automatically in your default browser
-      --init            Scaffold starter designs.json and sample artboards in target directory
+      --init            Add sample designs (two folders of artboards) to the directory
   -v, --version         Display the version
   -h, --help            Display this help message
 
@@ -90,7 +92,7 @@ Examples:
   htmlboard --open              # Run and launch browser automatically
   htmlboard ./designs -p 8080   # Serve ./designs on port 8080
   htmlboard design --root .     # Artboards in ./design that link to ../css/…
-  htmlboard --init              # Initialize starter templates in current folder
+  htmlboard --init              # Add sample designs to the current folder
   htmlboard skills install      # Add the HtmlBoard skill to this project's agents
 
 On the canvas:
@@ -119,42 +121,25 @@ function openBrowser(url) {
 
 function scaffoldProject(targetDir) {
   const templatesDir = path.join(__dirname, '..', 'src', 'templates');
-  const targetConfig = path.join(targetDir, 'designs.json');
-  const targetArtboardsDir = path.join(targetDir, 'artboards');
-
-  console.log(`[htmlboard] Scaffolding starter project in ${targetDir}...`);
-
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(targetArtboardsDir)) {
-    fs.mkdirSync(targetArtboardsDir, { recursive: true });
-  }
-
-  // Copy designs.json if not present
-  if (!fs.existsSync(targetConfig)) {
-    const srcConfig = path.join(templatesDir, 'designs.json');
-    if (fs.existsSync(srcConfig)) {
-      fs.copyFileSync(srcConfig, targetConfig);
-      console.log(`  ✓ Created designs.json`);
+  console.log(`[htmlboard] Adding sample designs to ${targetDir}...`);
+  // Folders are sections and number prefixes the order; each file says its own size
+  const copy = (from, rel) => {
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const relPath = path.join(rel, entry.name);
+      const dest = path.join(targetDir, relPath);
+      if (entry.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        copy(path.join(from, entry.name), relPath);
+      } else if (fs.existsSync(dest)) {
+        console.log(`  ℹ ${relPath} already exists (skipped)`);
+      } else {
+        fs.copyFileSync(path.join(from, entry.name), dest);
+        console.log(`  ✓ Created ${relPath}`);
+      }
     }
-  } else {
-    console.log(`  ℹ designs.json already exists (skipped)`);
-  }
-
-  // Copy starter artboards
-  const starterFiles = ['mobile.html', 'desktop.html', 'components.html'];
-  for (const file of starterFiles) {
-    const srcFile = path.join(templatesDir, 'artboards', file);
-    const destFile = path.join(targetArtboardsDir, file);
-    if (!fs.existsSync(destFile) && fs.existsSync(srcFile)) {
-      fs.copyFileSync(srcFile, destFile);
-      console.log(`  ✓ Created artboards/${file}`);
-    }
-  }
-
-  console.log(`\n🎉 Starter templates created successfully!`);
+  };
+  fs.mkdirSync(targetDir, { recursive: true });
+  copy(templatesDir, '');
 }
 
 function showSkillsHelp() {
@@ -221,11 +206,68 @@ function runSkills(args) {
   }
 }
 
+function runMigrate(args) {
+  const write = args.includes('--write');
+  const dirArg = args.find((arg) => !arg.startsWith('-'));
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Usage:
+  htmlboard migrate [directory] [--write]
+
+Moves what designs.json says about each design into the design's own file (its size, category,
+label, variants and description, as <meta> tags after its <title>) and leaves designs.json with
+the sections, their titles and order, and the values that differ from the files'.
+
+Without --write it only shows what it would do, and checks that the canvas stays the same.
+`);
+    return;
+  }
+  const dir = path.resolve(dirArg || process.cwd());
+  let plan;
+  try {
+    plan = planMigration(dir);
+  } catch (err) {
+    console.error(`[htmlboard] Can't read ${path.join(dir, 'designs.json')}: ${err.message}`);
+    process.exit(1);
+  }
+  const differences = checkMigration(dir, plan);
+  const [before, after] = plan.entries;
+
+  console.log(`\n  \x1b[1m${path.relative(process.cwd(), dir) || '.'}\x1b[0m`);
+  if (!plan.files.length) console.log('  \x1b[90mNo file to change.\x1b[0m');
+  for (const { file, lines } of plan.files) {
+    console.log(`\n  ${file}`);
+    for (const line of lines) console.log(`    \x1b[32m+\x1b[0m ${line}`);
+  }
+  console.log(`\n  designs.json: ${before} entries → ${after}`);
+  if (differences.length) {
+    console.log(`\n  \x1b[33mThe canvas would change:\x1b[0m`);
+    for (const { before: was, after: will } of differences.slice(0, 20)) {
+      if (was) console.log(`    \x1b[31m-\x1b[0m ${was}`);
+      if (will) console.log(`    \x1b[32m+\x1b[0m ${will}`);
+    }
+  } else {
+    console.log(`  \x1b[32m✓\x1b[0m The canvas stays the same.`);
+  }
+
+  if (!write) {
+    console.log(`\n  Nothing written. Run again with --write to apply.\n`);
+    return;
+  }
+  applyMigration(dir, plan);
+  console.log(`\n  \x1b[32m✓ Written:\x1b[0m ${plan.files.length} file${plan.files.length === 1 ? '' : 's'} and designs.json.\n`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
   if (args[0] === 'skills') {
     runSkills(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'migrate') {
+    runMigrate(args.slice(1));
     return;
   }
 
@@ -247,21 +289,15 @@ async function main() {
     scaffoldProject(targetDir);
   }
 
-  // If directory is empty, auto-prompt or auto-scaffold
+  // An empty folder (or a new one) gets the sample designs
   let entries = [];
   try {
     entries = fs.readdirSync(targetDir);
   } catch (_) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
-
-  const hasHtml = entries.some((e) => e.endsWith('.html')) ||
-    (fs.existsSync(path.join(targetDir, 'artboards')) &&
-     fs.readdirSync(path.join(targetDir, 'artboards')).some((e) => e.endsWith('.html')));
-  const hasDesignsJson = fs.existsSync(path.join(targetDir, 'designs.json'));
-
-  if (!hasHtml && !hasDesignsJson && entries.filter((e) => !e.startsWith('.')).length === 0) {
-    console.log(`[htmlboard] Directory is empty. Initializing starter artboards...`);
+  if (!options.init && !entries.some((e) => !e.startsWith('.'))) {
+    console.log(`[htmlboard] Directory is empty. Adding sample designs...`);
     scaffoldProject(targetDir);
   }
 

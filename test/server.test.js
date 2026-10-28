@@ -37,12 +37,17 @@ describe('HtmlBoard Core Functionality', () => {
     assert.ok(allArtboards.some((b) => b.file.includes('desktop.html')));
   });
 
-  test('loadDesignsManifest loads explicit designs.json when present', () => {
+  test('the sample designs describe themselves: folders, sizes, descriptions', () => {
     const manifest = loadDesignsManifest(TEMPLATES_DIR);
-    assert.ok(manifest);
-    assert.equal(manifest.autoDiscovered, false);
-    assert.equal(manifest.title, 'Design Exploration Canvas');
-    assert.ok(manifest.sections.length >= 2);
+    assert.equal(manifest.autoDiscovered, true);
+    assert.deepEqual(manifest.sections.map((s) => s.name), ['screens', 'components']);
+    const [desktop, mobile] = manifest.sections[0].artboards;
+    assert.equal(desktop.title, 'Desktop Dashboard');
+    assert.equal(desktop.id, 'screens-desktop');
+    assert.deepEqual([desktop.width, desktop.height, desktop.category], [1280, 820, 'desktop']);
+    assert.deepEqual([mobile.width, mobile.height, mobile.category], [390, 844, 'mobile']);
+    assert.match(mobile.description, /balance card/);
+    assert.equal(manifest.sections[1].artboards[0].category, 'components');
   });
 
   test('GET / serves the explorer index.html', async () => {
@@ -79,8 +84,8 @@ describe('HtmlBoard Core Functionality', () => {
     }
   });
 
-  test('GET /artboards/mobile.html serves the sample mobile artboard', async () => {
-    const res = await fetch(`${serverInstance.url}/artboards/mobile.html`);
+  test('GET /01-screens/02-mobile.html serves the sample mobile artboard', async () => {
+    const res = await fetch(`${serverInstance.url}/01-screens/02-mobile.html`);
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.ok(html.includes('Mobile Feed Screen'));

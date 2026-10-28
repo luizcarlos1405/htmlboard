@@ -104,7 +104,8 @@ function build(manifest) {
     const section = { name, designs: [], el: el('div', 'section-title', name), group: el('section') };
     els.overlay.insertBefore(section.el, els.hover);
     const items = el('ul');
-    section.group.append(el('h2', null, name));
+    // The files at the top of the folder make a first section without a title
+    if (name) section.group.append(el('h2', null, name));
     if (entry.description) section.group.append(el('p', 'section-desc', entry.description));
     section.group.append(items);
     for (const board of entry.artboards || []) {
@@ -328,7 +329,7 @@ function paint() {
     first = false;
     const named = room >= TITLE_SPACE + 2;
     const top = Math.round(y + section.y * z);
-    section.el.hidden = room < 30;
+    section.el.hidden = room < 30 || !section.name;
     section.el.style.transform = `translate(${Math.round(x + section.x * z)}px, ${top - (named ? 54 : 30)}px)`;
     for (const design of section.designs) {
       if (design.frame.hidden) {
@@ -617,6 +618,47 @@ function changesBetween(before, after) {
   return 'Canvas updated';
 }
 
+// The same designs in the same sections and order: what changed is names, sizes or categories.
+function sameShape(manifest) {
+  const sections = manifest.sections || [];
+  if (sections.length !== state.sections.length) return false;
+  let i = 0;
+  return sections.every((entry, s) => (entry.name || '') === state.sections[s].name
+    && (entry.artboards || []).length === state.sections[s].designs.length
+    && entry.artboards.every((board) => {
+      const design = state.designs[i++];
+      return design && design.id === String(board.id || board.file) && design.file === String(board.file);
+    }));
+}
+
+// Names, sizes, categories and descriptions changed in place: no frame reloads.
+function patch(manifest) {
+  const boards = manifest.sections.flatMap((section) => section.artboards.map((board) => [board, section]));
+  boards.forEach(([board, section], i) => {
+    const design = state.designs[i];
+    design.title = board.title || design.file;
+    design.label.textContent = design.title;
+    design.iframe.title = design.title;
+    design.item.querySelector('.name').textContent = design.title;
+    if (board.description) design.item.title = board.description;
+    else design.item.removeAttribute('title');
+    design.category = board.category || '';
+    design.search = fold([design.title, design.file, board.description, board.category, ...(board.tags || []), section.name]
+      .filter(Boolean).join(' '));
+    const autoHeight = !Number(board.height);
+    if (Number(board.width)) design.w = Number(board.width);
+    if (!autoHeight) design.h = Number(board.height);
+    else if (!design.autoHeight) growToPage(design);
+    design.autoHeight = autoHeight;
+    showDims(design);
+  });
+  state.manifest = JSON.stringify(manifest);
+  buildFilters();
+  applySearch();
+  layout();
+}
+
+// Reads the designs again: 'rebuilt' (a new canvas), 'patched' (names or sizes) or false (no change).
 // message: a text, or nothing to describe the change.
 async function rebuildIfChanged(message) {
   let manifest;
@@ -626,10 +668,14 @@ async function rebuildIfChanged(message) {
     return false;
   }
   if (JSON.stringify(manifest) === state.manifest) return false;
+  if (sameShape(manifest)) {
+    patch(manifest);
+    return 'patched';
+  }
   const before = state.designs.map(({ id, title }) => ({ id, title }));
   rebuild(manifest);
   toast(message || changesBetween(before, state.designs));
-  return true;
+  return 'rebuilt';
 }
 
 async function reloadAll() {
@@ -664,13 +710,17 @@ async function applyChanges() {
   pending.folders = false;
 
   // A new canvas loads every design afresh, so nothing else is left to do.
-  if (manifestChanged && await rebuildIfChanged('designs.json changed: canvas rebuilt')) return;
-  // Without designs.json every HTML file is a design (and its <title> its name); with it, an
-  // HTML file that isn't on the canvas may be one just added to it. A folder added or removed
-  // may bring or take a whole group of them.
+  if (manifestChanged) {
+    const result = await rebuildIfChanged('designs.json changed: canvas rebuilt');
+    if (result === 'rebuilt') return;
+    if (result === 'patched' && !files.length) toast('designs.json changed: names and sizes updated');
+  }
+  // Every HTML file is a design, and it says its own name, size and variants in its <head>: a saved
+  // page may be a new design, a renamed or resized one. A folder added or removed may bring or
+  // take a whole group of them.
   const pages = files.filter((file) => /\.html?$/i.test(file));
-  if (foldersChanged || (pages.length && (state.autoDiscovered || pages.some((file) => !state.designs.some((d) => d.path === `/${file}`))))) {
-    if (await rebuildIfChanged()) return;
+  if (foldersChanged || pages.length) {
+    if (await rebuildIfChanged() === 'rebuilt') return;
   }
 
   const paths = files.map((file) => `/${file}`);
