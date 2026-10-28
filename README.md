@@ -1,9 +1,14 @@
-# ✦ HtmlBoard
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/luizcarlos1405/htmlboard/main/brand/logo-dark.svg">
+    <img alt="htmlboard" src="https://raw.githubusercontent.com/luizcarlos1405/htmlboard/main/brand/logo-light.svg" height="56">
+  </picture>
+</h1>
 
 > **Infinite canvas and design explorer for HTML artboards — designed for humans and LLMs.**
 
-[![npm version](https://img.shields.io/npm/v/htmlboard.svg?style=flat-square&color=6366f1)](https://www.npmjs.com/package/htmlboard)
-[![license](https://img.shields.io/npm/l/htmlboard.svg?style=flat-square&color=10b981)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/htmlboard.svg?style=flat-square&color=3D9DFF)](https://www.npmjs.com/package/htmlboard)
+[![license](https://img.shields.io/npm/l/htmlboard.svg?style=flat-square&color=48484D)](LICENSE)
 [![node version](https://img.shields.io/node/v/htmlboard.svg?style=flat-square)](https://nodejs.org)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg?style=flat-square)](package.json)
 
@@ -279,12 +284,15 @@ htmlboard/
 │   │   ├── index.html    # Explorer shell: list, canvas, toolbar, shortcuts
 │   │   ├── explorer.css  # Dark chrome, dot grid
 │   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
+│   │   ├── favicon.svg, logo.svg, mark.svg
 │   │   └── fonts/        # Inter and Bricolage Grotesque (OFL)
 │   └── templates/        # Starter scaffold templates
 │       ├── designs.json  # Starter manifest
 │       └── artboards/    # Sample mobile, desktop, & component screens
 ├── skills/
 │   └── htmlboard/        # Agent skill (SKILL.md) copied by `htmlboard skills install`
+├── brand/                # The logo's files (from design/tools/logo.py)
+├── design/               # htmlboard's own designs, on its own canvas: `npx htmlboard design --root .`
 ├── package.json
 ├── README.md
 └── LICENSE
