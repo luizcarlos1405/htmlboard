@@ -67,7 +67,7 @@ function parseArgs(args) {
 
 function showHelp() {
   console.log(`
-HtmlBoard v${pkg.version}
+htmlboard v${pkg.version}
 Infinite canvas and design explorer for HTML artboards — designed for humans and LLMs
 
 Usage:
@@ -82,7 +82,7 @@ Options:
                         shared files outside the designs folder (default: the designs folder)
   -o, --open            Open the explorer automatically in your default browser
       --init            Scaffold starter designs.json and sample artboards in target directory
-  -v, --version         Display HtmlBoard version
+  -v, --version         Display the version
   -h, --help            Display this help message
 
 Examples:
@@ -272,8 +272,8 @@ async function main() {
     });
 
     console.log(`
-  ✦ \x1b[1m\x1b[36mHtmlBoard\x1b[0m \x1b[90mv${pkg.version}\x1b[0m
-  \x1b[90mInfinite Canvas & Design Explorer for HTML Artboards\x1b[0m
+  \x1b[90mhtml\x1b[0m\x1b[1mboard\x1b[0m \x1b[90mv${pkg.version}\x1b[0m
+  \x1b[90mInfinite canvas for HTML designs\x1b[0m
 
   \x1b[32m➜\x1b[0m  \x1b[1mLocal:\x1b[0m   \x1b[36m${url}\x1b[0m
   \x1b[32m➜\x1b[0m  \x1b[1mTarget:\x1b[0m  \x1b[90m${targetDir}\x1b[0m${rootDir !== targetDir ? `\n  \x1b[32m➜\x1b[0m  \x1b[1mRoot:\x1b[0m    \x1b[90m${rootDir}\x1b[0m` : ''}

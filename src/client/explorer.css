@@ -75,7 +75,13 @@ kbd {
 
 .app.is-collapsed .sidebar { display: none; }
 
-.sidebar-head { display: flex; align-items: baseline; gap: 8px; padding: 18px 16px 10px; }
+/* htmlboard's own row: the logo (a link to the project) and the version */
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 12px; border-bottom: 1px solid var(--x-line); }
+.brand-logo { display: block; border-radius: 4px; }
+.brand-logo img { display: block; width: auto; height: 18px; }
+.version { font-size: 11px; color: var(--x-text-soft); font-variant-numeric: tabular-nums; }
+
+.sidebar-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 16px 10px; }
 .sidebar-head h1 { min-width: 0; margin: 0; font: 800 24px/1.1 var(--font-display); overflow-wrap: anywhere; }
 .count { flex: none; font-size: 13px; color: var(--x-text-soft); font-variant-numeric: tabular-nums; }
 
@@ -347,6 +353,7 @@ kbd {
   text-align: center;
 }
 
+.notice-mark { justify-self: center; width: auto; height: 72px; margin-bottom: 8px; }
 .notice strong { font: 800 24px/1.2 var(--font-display); }
 .notice p { max-width: 34em; margin: 0; color: var(--x-text-soft); }
 .notice code { padding: 2px 6px; border-radius: 4px; background: var(--x-raised); color: var(--x-text); font-size: 14px; }

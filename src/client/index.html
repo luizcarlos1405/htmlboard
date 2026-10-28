@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231C1C1E'/%3E%3Crect x='7' y='8' width='8' height='16' rx='1.5' fill='%23EDEDEB'/%3E%3Crect x='18' y='8' width='7' height='9' rx='1.5' fill='%233D9DFF'/%3E%3C/svg%3E">
-  <title>HtmlBoard</title>
+  <link rel="icon" href="/__explorer/favicon.svg" type="image/svg+xml">
+  <title>htmlboard</title>
   <!-- Every design of the project side by side on one canvas you can pan and zoom, like a Figma
        page. The server lists the designs at /api/designs and pushes saved changes at /api/events.
        #<design id> opens on that design. -->
@@ -15,6 +15,10 @@
 <body>
   <div class="app" id="app">
     <aside class="sidebar" aria-label="Designs">
+      <div class="brand">
+        <a class="brand-logo" href="https://github.com/luizcarlos1405/htmlboard" target="_blank" rel="noopener" title="htmlboard on GitHub"><img src="/__explorer/logo.svg" alt="htmlboard" height="18"></a>
+        <span class="version" id="version"></span>
+      </div>
       <header class="sidebar-head">
         <h1 id="title">Designs</h1>
         <span class="count" id="count"></span>
@@ -87,6 +91,7 @@
 
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
       <div class="notice" id="notice" hidden>
+        <img class="notice-mark" src="/__explorer/mark.svg" alt="" height="72">
         <strong id="notice-title"></strong>
         <p id="notice-text"></p>
       </div>

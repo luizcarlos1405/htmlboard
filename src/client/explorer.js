@@ -27,6 +27,7 @@ const els = {
   hover: $('hover'), selection: $('selection'), size: $('size'), zoom: $('zoom-reset'), open: $('open'),
   live: $('live'), help: $('help'), helpToggle: $('help-toggle'), toggleList: $('toggle-list'),
   toast: $('toast'), notice: $('notice'), noticeTitle: $('notice-title'), noticeText: $('notice-text'),
+  version: $('version'),
 };
 
 const state = {
@@ -96,7 +97,7 @@ function build(manifest) {
   state.hover = null;
   const title = manifest.title || 'Designs';
   els.title.textContent = title;
-  document.title = `${title} · HtmlBoard`;
+  document.title = `${title} · htmlboard`;
   for (const entry of manifest.sections || []) {
     const name = entry.name || '';
     const section = { name, designs: [], el: el('div', 'section-title', name), group: el('section') };
@@ -119,7 +120,7 @@ function build(manifest) {
       'No designs yet',
       state.autoDiscovered
         ? 'Save an .html file in this folder and it shows up here by itself.'
-        : 'designs.json lists no designs yet. Add one and it shows up here by itself.',
+        : 'designs.json doesn’t list any designs. Add one and it shows up here by itself.',
     );
   } else {
     els.notice.hidden = true;
@@ -918,6 +919,7 @@ async function start() {
     ]);
     manifest = designs;
     if (health.dir) storePrefix = `htmlboard:${health.dir}:`;
+    if (health.version) els.version.textContent = health.version;
   } catch (err) {
     showNotice('Could not load the designs', `${err.message}. Is htmlboard still running?`);
     return;

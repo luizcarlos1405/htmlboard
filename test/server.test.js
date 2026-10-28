@@ -49,7 +49,8 @@ describe('HtmlBoard Core Functionality', () => {
     const res = await fetch(`${serverInstance.url}/`);
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.ok(html.includes('<title>HtmlBoard'));
+    assert.ok(html.includes('<title>htmlboard'));
+    assert.ok(html.includes('/__explorer/favicon.svg'));
     assert.ok(html.includes('id="viewport"'));
   });
 
@@ -66,6 +67,16 @@ describe('HtmlBoard Core Functionality', () => {
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.equal(data.status, 'ok');
+    assert.match(data.version, /^\d+\.\d+\.\d+/);
+  });
+
+  test('GET /__explorer serves the logo files', async () => {
+    for (const file of ['favicon.svg', 'logo.svg', 'mark.svg']) {
+      const res = await fetch(`${serverInstance.url}/__explorer/${file}`);
+      assert.equal(res.status, 200, file);
+      assert.equal(res.headers.get('content-type'), 'image/svg+xml', file);
+      assert.match(await res.text(), /<svg [^>]*aria-label="htmlboard"/, file);
+    }
   });
 
   test('GET /artboards/mobile.html serves the sample mobile artboard', async () => {
