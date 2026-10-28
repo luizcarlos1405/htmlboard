@@ -1,4 +1,5 @@
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -176,6 +177,27 @@ export function loadDesignsManifest(baseDir) {
 }
 
 /**
+ * Find the next available port using net.createServer
+ */
+export function findAvailablePort(startPort) {
+  return new Promise((resolve, reject) => {
+    const tester = net.createServer();
+    tester.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        resolve(findAvailablePort(startPort + 1));
+      } else {
+        reject(err);
+      }
+    });
+    tester.once('listening', () => {
+      const port = tester.address().port;
+      tester.close(() => resolve(port));
+    });
+    tester.listen(startPort);
+  });
+}
+
+/**
  * Creates and starts the HtmlBoard server
  */
 export function createServer(options = {}) {
@@ -342,34 +364,25 @@ export function createServer(options = {}) {
  */
 export async function startServer(options = {}) {
   const requestedPort = parseInt(options.port, 10) || 3000;
+  const actualPort = await findAvailablePort(requestedPort);
+
+  if (actualPort !== requestedPort) {
+    console.log(`[htmlboard] Port ${requestedPort} is in use, using ${actualPort}...`);
+  }
+
   const { server, targetDir, close } = createServer(options);
 
   return new Promise((resolve, reject) => {
-    let currentPort = requestedPort;
-
-    function attemptListen(port) {
-      server.once('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-          console.log(`[htmlboard] Port ${port} is in use, trying ${port + 1}...`);
-          currentPort = port + 1;
-          attemptListen(currentPort);
-        } else {
-          reject(err);
-        }
+    server.once('error', reject);
+    server.listen(actualPort, () => {
+      const url = `http://localhost:${actualPort}`;
+      resolve({
+        server,
+        port: actualPort,
+        url,
+        targetDir,
+        close
       });
-
-      server.listen(port, () => {
-        const url = `http://localhost:${port}`;
-        resolve({
-          server,
-          port: currentPort,
-          url,
-          targetDir,
-          close
-        });
-      });
-    }
-
-    attemptListen(requestedPort);
+    });
   });
 }
