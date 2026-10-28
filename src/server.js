@@ -57,30 +57,33 @@ function extractTitleFromHtml(content, fallbackName) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Default frame size for each category */
+/** Default frame size for each category, and for a design without one */
 const CATEGORY_SIZES = {
   mobile: [390, 844],
   tablet: [768, 1024],
   components: [720, 600],
-  desktop: [1280, 800],
-  responsive: [1200, 800]
+  desktop: [1280, 800]
 };
+const DEFAULT_SIZE = [1200, 800];
 
 /**
- * Guess an artboard's category from words in its path, then from its width
+ * Guess what a design is for: words in its path first, then its size when it is a screen's (a
+ * phone's width, a tablet's portrait 3:4, a desktop's landscape). Boards, flyers and other formats
+ * get none (null). Without a height (a page that grows) only the width counts.
  */
-export function inferCategory(file, width) {
+export function inferCategory(file, width, height) {
   const lower = file.toLowerCase();
   if (/mobile|phone|iphone/.test(lower)) return 'mobile';
   if (/tablet|ipad/.test(lower)) return 'tablet';
   if (/component|\bui\b|atomic/.test(lower)) return 'components';
-  if (/desktop|laptop|screen/.test(lower)) return 'desktop';
-  if (width) {
-    if (width <= 480) return 'mobile';
-    if (width <= 1024) return 'tablet';
-    return 'desktop';
-  }
-  return 'responsive';
+  if (/desktop|laptop/.test(lower)) return 'desktop';
+  if (!width) return null;
+  if (width <= 480) return 'mobile';
+  if (!height) return width >= 1024 ? 'desktop' : width >= 600 ? 'tablet' : null;
+  const ratio = height / width;
+  if (width >= 600 && width <= 1100 && ratio >= 1.3 && ratio <= 1.45) return 'tablet';
+  if (width >= 1024 && ratio <= 0.8) return 'desktop';
+  return null;
 }
 
 function slugify(text) {
@@ -128,7 +131,7 @@ export function discoverDesigns(baseDir) {
         }
 
         const category = inferCategory(relPath);
-        const [width, height] = CATEGORY_SIZES[category];
+        const [width, height] = CATEGORY_SIZES[category] || DEFAULT_SIZE;
 
         const sectionName = relativePath ? relativePath.replace(/[\\/]/g, ' / ') : 'Root Designs';
 
@@ -136,11 +139,10 @@ export function discoverDesigns(baseDir) {
           id: slugify(relPath.replace(/\.html$/i, '')),
           title,
           file: relPath.replace(/\\/g, '/'),
-          category,
+          ...(category && { category }),
           width,
           height,
-          sectionName,
-          tags: [category]
+          sectionName
         });
       }
     }
@@ -199,12 +201,13 @@ export function normalizeManifest(manifest, prefix = '') {
       name,
       artboards: boards.filter((board) => board && board.file).map((board) => {
         const file = prefix ? path.posix.join(prefix, board.file) : board.file;
+        const category = board.category ?? inferCategory(board.file.split('?')[0], board.width, board.height);
         return {
           ...board,
           id: uniqueId(board.id ?? slugify(board.file.replace(/\.html?(?=$|\?)/i, ''))),
           title: board.title ?? board.file,
           file,
-          category: board.category ?? inferCategory(board.file.split('?')[0], board.width)
+          ...(category && { category })
         };
       })
     };

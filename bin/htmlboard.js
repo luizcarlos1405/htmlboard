@@ -98,6 +98,7 @@ On the canvas:
   Ctrl/Cmd + scroll     Zoom (or pinch)
   Double-click          Fit a design (Shift + 1 fits everything)
   /                     Search
+  1 – 4                 Show all, mobile, tablet, desktop
   ?                     All the shortcuts
 `);
 }

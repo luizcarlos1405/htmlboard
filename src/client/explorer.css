@@ -90,9 +90,10 @@ kbd {
 .brand-logo img { display: block; width: auto; height: 18px; }
 .version { font-size: 11px; color: var(--x-text-faint); font-variant-numeric: tabular-nums; }
 
-.sidebar-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 16px 10px; }
-.sidebar-head h1 { min-width: 0; margin: 0; font: 800 24px/1.1 var(--font-display); overflow-wrap: anywhere; }
-.count { flex: none; font-size: 13px; color: var(--x-text-soft); font-variant-numeric: tabular-nums; }
+/* The project's title, the count running on after its last word */
+.sidebar-head { padding: 16px 16px 10px; }
+.sidebar-head h1 { display: inline; margin: 0; font: 800 24px/1.1 var(--font-display); overflow-wrap: anywhere; }
+.count { margin-left: 8px; font-size: 13px; color: var(--x-text-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .search { position: relative; margin: 0 12px 4px; }
 
@@ -136,6 +137,24 @@ kbd {
   pointer-events: none;
 }
 
+/* The filters: all, the devices (and any other category), as chips that wrap */
+.filters { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 12px 0; }
+
+.filter {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--x-line-soft);
+  border-radius: 13px;
+  background: none;
+  color: var(--x-text-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filter:hover:not(:disabled) { background: var(--x-wash); color: var(--x-text); }
+.filter[aria-pressed='true'] { border-color: transparent; background: var(--x-accent-wash); color: var(--x-accent-text); }
+.filter:disabled { color: var(--x-text-faint); border-style: dashed; cursor: default; }
 
 .search input:focus ~ kbd, .search input:not(:placeholder-shown) ~ kbd { display: none; }
 

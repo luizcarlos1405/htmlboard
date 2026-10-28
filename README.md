@@ -34,6 +34,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 🔄 **State-Preserving Live Reload**: The server watches the project and pushes every save (Server-Sent Events). Saving a design reloads its frame; saving a file designs use (a stylesheet, a script, an image, data) reloads just the designs that loaded it; new, removed and renamed designs show up by themselves. Your view never moves.
 - 🔍 **Auto-Discovery**: Point HtmlBoard at any folder. It finds every HTML file, names it after its `<title>`, sizes it from words in its path (mobile, tablet, desktop…) and lays the folders out as rows.
 - 📐 **Declarative Manifest (`designs.json`)**: Optional file to choose the sections, the order, the sizes and the names.
+- 📱 **Device Filters**: **Mobile**, **Tablet** and **Desktop** (and **Components**, or your own categories) lay out just those designs, side by side, to compare them.
 - 🔎 **Search**: Find designs by name, file, tags or section (case and accents don't matter); the others fade out in place.
 - 🎯 **Focus & Zoom-to-Fit**: Click a design in the list or double-click it on the canvas to fit it, <kbd>Shift</kbd> + <kbd>1</kbd> fits everything, <kbd>←</kbd> <kbd>→</kbd> step through the designs.
 - 🔗 **Deep Links**: The URL follows the selected design (`http://localhost:3000/#checkout-b`), so you can share or reload a view of one design.
@@ -165,7 +166,7 @@ While HtmlBoard automatically discovers HTML files, you can add a `designs.json`
 
 Sections are rows (top to bottom) and designs run left to right. A `file` may carry a query string, so one HTML file can show several states. Leave `height` out to let the frame grow with its page. `id` and `category` are derived from the file when left out.
 
-The full form adds ids, descriptions (shown in the list), categories and tags (searchable); `name`/`artboards` are synonyms of `title`/`designs`:
+The full form adds ids, descriptions (shown in the list), tags (searchable) and categories, which drive the filters: `mobile`, `tablet`, `desktop`, `components` or any word of yours. Left out, the category comes from words in the path (mobile, phone, tablet, desktop…), then from the size when it is a screen's (a phone's width, a tablet's 3:4, a desktop's landscape); flyers, boards and other formats get none and show under **All**. `name`/`artboards` are synonyms of `title`/`designs`:
 
 ```json
 {
@@ -232,10 +233,11 @@ The full form adds ids, descriptions (shown in the list), categories and tags (s
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next design |
 | <kbd>Enter</kbd> | Open the selected design on its own |
 | <kbd>/</kbd> | Search (<kbd>Enter</kbd> fits the first match, <kbd>Esc</kbd> clears) |
+| <kbd>1</kbd> – <kbd>4</kbd> | Show all, mobile, tablet, desktop (<kbd>5</kbd> on: the other categories) |
 | <kbd>R</kbd> | Reload the designs |
 | <kbd>\</kbd> | Show or hide the list |
 | <kbd>?</kbd> | Show the shortcuts |
-| <kbd>Esc</kbd> | Deselect |
+| <kbd>Esc</kbd> | Deselect, then clear the search, then the filter |
 
 On the canvas the designs are pictures: the canvas takes every click and scroll, so <kbd>Ctrl</kbd> + scroll never zooms the page itself. Use **Open** (or <kbd>Enter</kbd>) to try a design's links and hover states on its own.
 

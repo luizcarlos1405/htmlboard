@@ -43,12 +43,26 @@ describe('Manifest short form and --root', () => {
     assert.equal(sections[0].artboards[0].category, 'desktop');
   });
 
-  test('inferCategory reads path words, then width', () => {
+  test('inferCategory reads path words, then a screen\'s size', () => {
     assert.equal(inferCategory('checkout/mobile-b.html'), 'mobile');
-    assert.equal(inferCategory('guide.html'), 'responsive');
     assert.equal(inferCategory('ui/buttons.html'), 'components');
-    assert.equal(inferCategory('flyer.html', 1080), 'desktop');
-    assert.equal(inferCategory('card.html', 390), 'mobile');
+    assert.equal(inferCategory('guide.html'), null);
+    // Screens: a phone's width, a tablet's portrait 3:4, a desktop's landscape
+    assert.equal(inferCategory('card.html', 390, 844), 'mobile');
+    assert.equal(inferCategory('home.html', 768, 1024), 'tablet');
+    assert.equal(inferCategory('home.html', 1440, 900), 'desktop');
+    // Pages that grow: the width alone
+    assert.equal(inferCategory('page.html', 1280), 'desktop');
+    assert.equal(inferCategory('page.html', 820), 'tablet');
+    // Not screens: a 4:5 flyer, a tall board, a near-square mark
+    assert.equal(inferCategory('flyer.html', 1080, 1350), null);
+    assert.equal(inferCategory('board.html', 1200, 1598), null);
+    assert.equal(inferCategory('mark.html', 860, 904), null);
+  });
+
+  test('designs without a category come without one', () => {
+    const { sections } = normalizeManifest({ sections: [{ designs: [{ file: 'flyer.html', width: 1080, height: 1350 }] }] });
+    assert.equal('category' in sections[0].artboards[0], false);
   });
 
   test('discovered artboards get the same slug ids as manifest ones', () => {

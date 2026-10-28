@@ -77,7 +77,7 @@ One design per file. Keep each file self-contained so it renders on its own:
 - Sections are rows, top to bottom; designs run left to right.
 - `file` is relative to the designs folder and may carry a query string, so one file can show several states.
 - Omit `height` to let the frame grow to the page's full height (long pages, boards, docs).
-- Optional: `description` (shown in the list), `tags` and `category` (searchable), `id` (derived from `file`).
+- Optional: `description` (shown in the list), `tags` (searchable), `id` (derived from `file`), and `category`, which drives the explorer's filters: `mobile`, `tablet`, `desktop`, `components` or your own word. Left out, it comes from words in the path, then from the size when it is a screen's; flyers, boards and other formats get none.
 - `name` and `artboards` are accepted as synonyms of a section's `title` and `designs`.
 
 When the project already has a `designs.json`, add every new file to it.

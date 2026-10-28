@@ -23,7 +23,7 @@ const DEFAULT_SIZE = [1200, 800]; // a design whose entry gives no size; without
 const $ = (id) => document.getElementById(id);
 const els = {
   app: $('app'), title: $('title'), list: $('list'), count: $('count'), search: $('search'),
-  noMatch: $('no-match'), viewport: $('viewport'), world: $('world'), overlay: $('overlay'),
+  noMatch: $('no-match'), filters: $('filters'), viewport: $('viewport'), world: $('world'), overlay: $('overlay'),
   hover: $('hover'), selection: $('selection'), size: $('size'), zoom: $('zoom-reset'), open: $('open'),
   live: $('live'), help: $('help'), helpToggle: $('help-toggle'), toggleList: $('toggle-list'),
   toast: $('toast'), notice: $('notice'), noticeTitle: $('notice-title'), noticeText: $('notice-text'),
@@ -39,6 +39,7 @@ const state = {
   selected: null,
   hover: null,
   query: [],            // the search's words, folded
+  category: '',         // the filter: a category, or '' for all
   // What the first view fitted ('all' or a design). Until the user moves the canvas, it is fitted
   // again when the designs' real sizes come in.
   autoFit: null,
@@ -125,6 +126,7 @@ function build(manifest) {
   } else {
     els.notice.hidden = true;
   }
+  buildFilters();
   applySearch();
   layout();
 }
@@ -133,6 +135,7 @@ function makeDesign(board, section) {
   const file = String(board.file);
   const design = {
     id: String(board.id || file),
+    category: board.category || '',
     file,
     path: `/${file.split('?')[0]}`,
     title: board.title || file,
@@ -194,15 +197,60 @@ function growToPage(design) {
   layout();
 }
 
-// ---------------------------------------------------------------- searching
+// ---------------------------------------------------------------- filtering and searching
+
+// The device filters come together, so a project without tablets shows that it has none; then any
+// other category the designs carry (components, or whatever a designs.json names).
+const DEVICES = ['mobile', 'tablet', 'desktop'];
+const LABELS = { '': 'All', mobile: 'Mobile', tablet: 'Tablet', desktop: 'Desktop', components: 'Components' };
+
+// The filter lays out only its designs; the search fades the others where they are.
+function inFilter(design) {
+  return !state.category || design.category === state.category;
+}
 
 function matches(design) {
   return state.query.every((word) => design.search.includes(word));
 }
 
-// The designs the search keeps (all of them without a search).
+// The designs the filter and the search keep.
 function shown() {
-  return state.query.length ? state.designs.filter(matches) : state.designs;
+  return state.designs.filter((d) => inFilter(d) && matches(d));
+}
+
+function buildFilters() {
+  const counts = new Map();
+  for (const d of state.designs) if (d.category) counts.set(d.category, (counts.get(d.category) || 0) + 1);
+  const others = [...counts.keys()].filter((c) => !DEVICES.includes(c))
+    .sort((a, b) => (a === 'components' ? -1 : b === 'components' ? 1 : a.localeCompare(b)));
+  const categories = ['', ...(DEVICES.some((c) => counts.has(c)) ? DEVICES : []), ...others];
+  if (state.category && !counts.has(state.category)) state.category = '';
+  els.filters.replaceChildren(...categories.map((category, i) => {
+    const count = category ? counts.get(category) || 0 : state.designs.length;
+    const label = LABELS[category] ?? category.charAt(0).toUpperCase() + category.slice(1);
+    const button = el('button', 'filter', label);
+    button.type = 'button';
+    button.dataset.category = category;
+    button.disabled = !count;
+    button.title = `${count} design${count === 1 ? '' : 's'}${i < 9 ? ` (${i + 1})` : ''}`;
+    button.setAttribute('aria-pressed', String(category === state.category));
+    button.addEventListener('click', () => setCategory(category));
+    return button;
+  }));
+  // Nothing to tell apart: no categories, or one that every design shares
+  els.filters.hidden = !counts.size || (counts.size === 1 && counts.values().next().value === state.designs.length);
+}
+
+function setCategory(category, { fitAll = true } = {}) {
+  if (category === state.category) return;
+  state.category = category;
+  for (const button of els.filters.children) button.setAttribute('aria-pressed', String(button.dataset.category === category));
+  if (state.selected && !inFilter(state.selected)) select(null);
+  if (state.hover && !inFilter(state.hover)) state.hover = null;
+  state.autoFit = null;
+  applySearch();
+  layout();
+  if (fitAll) fit('all');
 }
 
 function applySearch() {
@@ -210,10 +258,11 @@ function applySearch() {
   for (const section of state.sections) {
     let any = false;
     for (const design of section.designs) {
-      const on = matches(design);
+      const kept = inFilter(design);
+      const on = kept && matches(design);
       design.li.hidden = !on;
-      design.frame.classList.toggle('is-dimmed', !on);
-      design.label.classList.toggle('is-dimmed', !on);
+      design.frame.classList.toggle('is-dimmed', kept && !on);
+      design.label.classList.toggle('is-dimmed', kept && !on);
       if (on) {
         any = true;
         count++;
@@ -222,8 +271,9 @@ function applySearch() {
     section.group.hidden = !any;
   }
   const total = state.designs.length;
-  els.count.textContent = state.query.length ? `${count} of ${total}` : String(total);
-  els.noMatch.hidden = !state.query.length || count > 0;
+  const narrowed = state.query.length || state.category;
+  els.count.textContent = narrowed ? `${count} of ${total}` : String(total);
+  els.noMatch.hidden = !narrowed || count > 0;
 }
 
 function search(text) {
@@ -240,14 +290,17 @@ function layout() {
     let x = 0;
     let height = 0;
     for (const design of section.designs) {
+      design.frame.hidden = !inFilter(design);
+      if (design.frame.hidden) continue;
       design.x = x;
       design.y = y;
       Object.assign(design.frame.style, { left: `${x}px`, top: `${y}px`, width: `${design.w}px`, height: `${design.h}px` });
       x += design.w + FRAME_GAP;
       height = Math.max(height, design.h);
     }
-    Object.assign(section, { x: 0, y, w: Math.max(0, x - FRAME_GAP), h: height });
-    y += height + SECTION_GAP;
+    // A section the filter empties takes no room
+    Object.assign(section, { x: 0, y, w: Math.max(0, x - FRAME_GAP), h: height, shown: x > 0 });
+    if (section.shown) y += height + SECTION_GAP;
   }
   if (state.autoFit) fit(state.autoFit, { animate: false });
   else paint();
@@ -264,19 +317,30 @@ function paint() {
   els.viewport.style.backgroundPosition = `${x}px ${y}px`;
   // Above each row: the section's title, then the designs' names. Zoomed far out the gap between
   // rows gets thin: the names give way first, then the title.
-  state.sections.forEach((section, index) => {
-    const room = index ? SECTION_GAP * z : Infinity;
+  let first = true;
+  for (const section of state.sections) {
+    if (!section.shown) {
+      section.el.hidden = true;
+      for (const design of section.designs) design.label.hidden = true;
+      continue;
+    }
+    const room = first ? Infinity : SECTION_GAP * z;
+    first = false;
     const named = room >= TITLE_SPACE + 2;
     const top = Math.round(y + section.y * z);
-    section.el.hidden = !section.designs.length || room < 30;
+    section.el.hidden = room < 30;
     section.el.style.transform = `translate(${Math.round(x + section.x * z)}px, ${top - (named ? 54 : 30)}px)`;
     for (const design of section.designs) {
+      if (design.frame.hidden) {
+        design.label.hidden = true;
+        continue;
+      }
       const width = design.w * z;
       design.label.hidden = !named || width < MIN_NAMED;
       design.label.style.width = `${Math.round(width)}px`;
       design.label.style.transform = `translate(${Math.round(x + design.x * z)}px, ${top - 22}px)`;
     }
-  });
+  }
   els.zoom.textContent = `${Math.round(z * 100)}%`;
   paintMarks();
   saveView();
@@ -351,7 +415,7 @@ function viewFor(rect, top) {
 function fit(target, { animate = true } = {}) {
   if (target === 'all') {
     const designs = shown();
-    moveTo(viewFor(boundsOf(designs.length ? designs : state.designs), TITLE_SPACE), animate);
+    moveTo(viewFor(boundsOf(designs.length ? designs : state.designs.filter(inFilter)), TITLE_SPACE), animate);
   } else {
     moveTo(viewFor(target, NAME_SPACE), animate);
   }
@@ -459,6 +523,7 @@ function hit(point) {
   const cy = (point.y - y) / z;
   for (let i = state.designs.length - 1; i >= 0; i--) {
     const d = state.designs[i];
+    if (d.frame.hidden) continue;
     const top = d.y - (d.label.hidden ? 0 : NAME_SPACE / z);
     if (cx >= d.x && cx <= d.x + d.w && cy >= top && cy <= d.y + d.h) return d;
   }
@@ -848,12 +913,13 @@ function wire() {
     else if (key === 'ArrowRight' || key === 'ArrowDown') step(1);
     else if (key === 'ArrowLeft' || key === 'ArrowUp') step(-1);
     else if (key === 'Escape') {
+      // One thing at a time: the shortcuts, the selection, the search, the filter
       if (!els.help.hidden) toggleHelp(false);
       else if (state.selected) select(null);
       else if (els.search.value) {
         els.search.value = '';
         search('');
-      }
+      } else if (state.category) setCategory('');
     } else if (key === 'Enter' && !onControl) openSelected();
     else if (key === 'r' || key === 'R') reloadAll();
     else if (key === '/') {
@@ -861,6 +927,12 @@ function wire() {
       els.search.focus();
       els.search.select();
     } else if (key === '?') toggleHelp();
+    else if (/^[1-9]$/.test(key) && !event.shiftKey && !els.filters.hidden) {
+      // 1 shows all, 2 to 4 mobile, tablet, desktop, then the other categories
+      const button = els.filters.children[Number(key) - 1];
+      if (button && !button.disabled) setCategory(button.dataset.category);
+      else handled = false;
+    }
     else if (key === '\\' || key === '[' || key === ']') toggleList();
     else handled = false;
     if (handled) {
@@ -890,6 +962,7 @@ function wire() {
     const design = designFromHash();
     if (design && design !== state.selected) {
       state.autoFit = null;
+      if (!inFilter(design)) setCategory('', { fitAll: false });
       select(design, { fit: true });
     }
   });
