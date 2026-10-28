@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Component Library Preview</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    :root {
+      --bg: #0d0f17;
+      --card-bg: #141724;
+      --border: #24293e;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --emerald: #10b981;
+      --rose: #f43f5e;
+      --amber: #f59e0b;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .section {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .flex-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    /* Buttons */
+    .btn {
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary {
+      background: #1e2336;
+      border-color: var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover { background: #262c44; }
+    .btn-outline {
+      background: transparent;
+      border-color: #3b4260;
+      color: var(--text);
+    }
+    .btn-outline:hover { background: rgba(255, 255, 255, 0.05); }
+    .btn-danger {
+      background: rgba(244, 63, 94, 0.15);
+      border-color: rgba(244, 63, 94, 0.3);
+      color: var(--rose);
+    }
+    .btn-danger:hover { background: rgba(244, 63, 94, 0.25); }
+
+    /* Badges */
+    .badge {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .badge-indigo { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+    .badge-indigo .badge-dot { background: #818cf8; }
+    .badge-emerald { background: rgba(16, 185, 129, 0.15); color: var(--emerald); }
+    .badge-emerald .badge-dot { background: var(--emerald); }
+    .badge-amber { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+    .badge-amber .badge-dot { background: var(--amber); }
+    .badge-rose { background: rgba(244, 63, 94, 0.15); color: var(--rose); }
+    .badge-rose .badge-dot { background: var(--rose); }
+
+    /* Inputs */
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+      min-width: 200px;
+    }
+    .input-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    .input-field {
+      background: #0d0f17;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    .input-field:focus {
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 class="title">Design System Components</h1>
+    <p class="subtitle">Reusable UI atoms for consistency across platforms</p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Buttons & Interactive Triggers</div>
+    <div class="flex-row">
+      <button class="btn btn-primary"><span>✨</span> Primary Action</button>
+      <button class="btn btn-secondary">Secondary Action</button>
+      <button class="btn btn-outline">Outline Button</button>
+      <button class="btn btn-danger"><span>🗑️</span> Danger Action</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Status Pills & Badges</div>
+    <div class="flex-row">
+      <div class="badge badge-indigo"><span class="badge-dot"></span> In Progress</div>
+      <div class="badge badge-emerald"><span class="badge-dot"></span> Active / Healthy</div>
+      <div class="badge badge-amber"><span class="badge-dot"></span> Review Required</div>
+      <div class="badge badge-rose"><span class="badge-dot"></span> Error / Offline</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Form Controls</div>
+    <div class="flex-row">
+      <div class="input-group">
+        <label class="input-label">Project Name</label>
+        <input type="text" class="input-field" value="HtmlBoard Studio" />
+      </div>
+      <div class="input-group">
+        <label class="input-label">Environment Target</label>
+        <input type="text" class="input-field" value="production-edge-01" />
+      </div>
+    </div>
+  </div>
+</body>
+</html>

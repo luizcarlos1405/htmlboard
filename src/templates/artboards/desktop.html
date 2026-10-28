@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desktop Dashboard</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    :root {
+      --bg: #0b0d13;
+      --sidebar-bg: #10131d;
+      --panel-bg: #151824;
+      --border: #23283c;
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 20px 16px;
+      flex-shrink: 0;
+    }
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px 24px;
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+    .logo-badge {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #6366f1, #3b82f6);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    }
+    .nav-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .nav-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      padding: 8px 12px 4px;
+      font-weight: 600;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .nav-link:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+    .nav-link.active {
+      background: rgba(99, 102, 241, 0.12);
+      color: var(--accent-light);
+      font-weight: 600;
+    }
+    .user-footer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+    }
+    .user-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ec4899, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    /* Main Content */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    /* Top Header */
+    .topbar {
+      height: 64px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      background: rgba(11, 13, 19, 0.8);
+      backdrop-filter: blur(12px);
+    }
+    .search-input {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      padding: 8px 16px 8px 36px;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      width: 280px;
+      position: relative;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .primary-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+    /* Dashboard Area */
+    .content {
+      padding: 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .page-sub {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+    /* Stat Cards */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+    .stat-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+    }
+    .stat-title {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .stat-val {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .stat-badge {
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .stat-badge.pos { color: var(--emerald); }
+    .stat-badge.warn { color: var(--amber); }
+
+    /* Visual Grid */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    /* Chart SVG */
+    .chart-container {
+      width: 100%;
+      height: 180px;
+    }
+    /* Table */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .data-table th {
+      text-align: left;
+      color: #64748b;
+      font-weight: 500;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table td {
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-pill.success { background: rgba(16, 185, 129, 0.15); color: var(--emerald); }
+    .status-pill.pending { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="logo-container">
+      <div class="logo-badge">⚡</div>
+      <span>Nexus Platform</span>
+    </div>
+
+    <nav class="nav-group">
+      <div class="nav-label">Core</div>
+      <a href="#" class="nav-link active">📊 Dashboard</a>
+      <a href="#" class="nav-link">👥 Customers</a>
+      <a href="#" class="nav-link">💳 Invoices</a>
+      <a href="#" class="nav-link">📈 Analytics</a>
+
+      <div class="nav-label" style="margin-top: 16px;">System</div>
+      <a href="#" class="nav-link">⚙️ Settings</a>
+      <a href="#" class="nav-link">🛡️ Security</a>
+    </nav>
+
+    <div class="user-footer">
+      <div class="user-avatar">AD</div>
+      <div>
+        <div style="font-size: 13px; font-weight: 600;">Alex Morgan</div>
+        <div style="font-size: 11px; color: var(--text-muted);">alex@nexus.io</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <input type="text" class="search-input" placeholder="Search resources, clients, reports...">
+      <div class="header-actions">
+        <span style="font-size: 13px; color: var(--text-muted);">Last sync: Just now</span>
+        <button class="primary-btn">+ New Deployment</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Executive Overview</h1>
+          <p class="page-sub">Performance metrics and active client deployments</p>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-title">Monthly Recurring Revenue</div>
+          <div class="stat-val">$184,290</div>
+          <div class="stat-badge pos">▲ +12.4% vs last mo</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">Active Organizations</div>
+          <div class="stat-val">1,428</div>
+          <div class="stat-badge pos">▲ +48 new</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">API Requests (24h)</div>
+          <div class="stat-val">42.8M</div>
+          <div class="stat-badge pos">▲ 99.98% uptime</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-title">Average Latency</div>
+          <div class="stat-val">34ms</div>
+          <div class="stat-badge warn">▼ -2ms target</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Throughput & Workload Trends</h2>
+            <span style="font-size: 12px; color: var(--text-muted);">Trailing 7 Days</span>
+          </div>
+          <div class="chart-container">
+            <svg viewBox="0 0 500 150" width="100%" height="100%" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#6366f1" stop-opacity="0.5"/>
+                  <stop offset="100%" stop-color="#6366f1" stop-opacity="0.0"/>
+                </linearGradient>
+              </defs>
+              <path d="M 0 130 Q 80 70, 150 90 T 300 40 T 420 50 T 500 20 L 500 150 L 0 150 Z" fill="url(#chartGrad)"/>
+              <path d="M 0 130 Q 80 70, 150 90 T 300 40 T 420 50 T 500 20" fill="none" stroke="#6366f1" stroke-width="3"/>
+              <circle cx="500" cy="20" r="4" fill="#a855f7" stroke="#fff" stroke-width="2"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Recent Audits</h2>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>us-east-cluster-01</td>
+                <td><span class="status-pill success">Optimal</span></td>
+              </tr>
+              <tr>
+                <td>auth-gateway-proxy</td>
+                <td><span class="status-pill success">Optimal</span></td>
+              </tr>
+              <tr>
+                <td>edge-cache-frankfurt</td>
+                <td><span class="status-pill pending">Rebalancing</span></td>
+              </tr>
+              <tr>
+                <td>db-replica-primary</td>
+                <td><span class="status-pill success">Optimal</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

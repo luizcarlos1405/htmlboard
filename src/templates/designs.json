@@ -1,0 +1,52 @@
+{
+  "title": "Design Exploration Canvas",
+  "description": "Infinite canvas and artboard explorer for HTML designs and components",
+  "columns": 3,
+  "gap": 48,
+  "sections": [
+    {
+      "id": "screens",
+      "name": "Screen Layouts",
+      "description": "Full page layouts across mobile and desktop viewports",
+      "artboards": [
+        {
+          "id": "desktop-dashboard",
+          "title": "Desktop Dashboard",
+          "description": "Main analytics dashboard with sidebar, metric cards, and charts",
+          "file": "artboards/desktop.html",
+          "width": 1280,
+          "height": 820,
+          "category": "desktop",
+          "tags": ["desktop", "dashboard", "analytics", "dark-mode"]
+        },
+        {
+          "id": "mobile-app",
+          "title": "Mobile App Feed",
+          "description": "Smartphone screen with balance card, quick actions, and transaction feed",
+          "file": "artboards/mobile.html",
+          "width": 390,
+          "height": 844,
+          "category": "mobile",
+          "tags": ["mobile", "ios", "feed", "finance"]
+        }
+      ]
+    },
+    {
+      "id": "components",
+      "name": "Component Library",
+      "description": "Reusable atomic UI blocks and design system primitives",
+      "artboards": [
+        {
+          "id": "ui-primitives",
+          "title": "UI Component Kit",
+          "description": "Buttons, inputs, badges, cards, and interactive elements",
+          "file": "artboards/components.html",
+          "width": 780,
+          "height": 720,
+          "category": "components",
+          "tags": ["design-system", "buttons", "badges", "inputs"]
+        }
+      ]
+    }
+  ]
+}

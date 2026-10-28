@@ -1,0 +1,38 @@
+{
+  "name": "htmlboard",
+  "version": "0.1.0",
+  "description": "Infinite canvas and design explorer for HTML artboards — designed for humans and LLMs",
+  "type": "module",
+  "bin": {
+    "htmlboard": "./bin/htmlboard.js"
+  },
+  "main": "./src/index.js",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./bin/htmlboard.js",
+    "dev": "node ./bin/htmlboard.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "canvas",
+    "design",
+    "artboard",
+    "html",
+    "ui",
+    "explorer",
+    "infinite-canvas",
+    "llm",
+    "prototyping",
+    "live-reload"
+  ],
+  "author": "Luiz Carlos <luizcarlos1405>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
