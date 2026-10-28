@@ -9,7 +9,8 @@ export {
   discoverDesigns,
   loadDesignsManifest,
   normalizeManifest,
-  inferCategory
+  inferCategory,
+  watchTree
 } from './server.js';
 
 export {

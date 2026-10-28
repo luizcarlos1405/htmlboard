@@ -234,6 +234,89 @@ export function loadDesignsManifest(baseDir, rootDir = baseDir) {
   return normalizeManifest(discoverDesigns(baseDir), prefix);
 }
 
+/** Folders the watcher leaves alone: hidden ones (.git, .vscode, …) and dependencies */
+const skipWatching = (name) => name.startsWith('.') || name === 'node_modules';
+
+/**
+ * Watch a folder and everything under it, calling onChange(path, isFolder) with the path (relative,
+ * with forward slashes) of every file or folder created, changed or removed.
+ * macOS and Windows watch a whole tree natively. On Linux Node emulates that with one watcher per
+ * file, which loses a file for good once it is saved by replacing it (writing a copy and renaming
+ * it over, as many editors do), so there every folder gets its own watcher instead.
+ * Returns a function that stops watching.
+ */
+export function watchTree(rootDir, onChange) {
+  const relative = (full) => path.relative(rootDir, full).split(path.sep).join('/');
+  const skipped = (rel) => rel.split('/').some(skipWatching);
+
+  if (process.platform !== 'linux') {
+    const watcher = fs.watch(rootDir, { recursive: true }, (eventType, filename) => {
+      if (!filename) return;
+      const rel = String(filename).split(path.sep).join('/');
+      if (skipped(rel)) return;
+      let isFolder;
+      try {
+        isFolder = fs.statSync(path.join(rootDir, rel)).isDirectory();
+      } catch {
+        isFolder = path.extname(rel) === ''; // gone: a name without an extension was likely a folder
+      }
+      onChange(rel, isFolder);
+    });
+    return () => watcher.close();
+  }
+
+  const watchers = new Map(); // folder → its watcher
+  const unwatch = (dir) => {
+    for (const [watched, watcher] of watchers) {
+      if (watched === dir || watched.startsWith(dir + path.sep)) {
+        watcher.close();
+        watchers.delete(watched);
+      }
+    }
+  };
+  const watch = (dir) => {
+    if (watchers.has(dir)) return;
+    let watcher;
+    try {
+      watcher = fs.watch(dir, (eventType, name) => {
+        if (!name) return;
+        const full = path.join(dir, String(name));
+        const rel = relative(full);
+        if (!rel || rel.startsWith('..') || skipped(rel)) return;
+        let isDir = false;
+        try {
+          isDir = fs.statSync(full).isDirectory();
+        } catch {
+          // Removed
+        }
+        const wasDir = watchers.has(full);
+        if (isDir) watch(full);
+        else if (wasDir) unwatch(full);
+        onChange(rel, isDir || wasDir);
+      });
+    } catch {
+      return; // gone already, or unreadable
+    }
+    watcher.on('error', () => unwatch(dir));
+    watchers.set(dir, watcher);
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // Unreadable: its own watcher still reports what happens in it
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() && !skipWatching(entry.name)) watch(path.join(dir, entry.name));
+    }
+  };
+
+  watch(rootDir);
+  return () => {
+    for (const watcher of watchers.values()) watcher.close();
+    watchers.clear();
+  };
+}
+
 /**
  * Find the next available port using net.createServer
  */
@@ -369,37 +452,25 @@ export function createServer(options = {}) {
     }
   }
 
-  // File watcher for live reload. Saves come in bursts (an editor writing a file several times,
-  // an agent saving a page and its stylesheet together), so changes are collected for 100 ms and
-  // then sent once each.
-  const changedFiles = new Set();
+  // Live reload. Saves come in bursts (an editor writing a file several times, an agent saving a
+  // page and its stylesheet together), so changes are collected for 100 ms and then sent once each.
+  const changed = new Map(); // path → is a folder
   let watchDebounceTimer = null;
-  let watcher = null;
+  let stopWatching = null;
 
   try {
-    watcher = fs.watch(rootDir, { recursive: true }, (eventType, filename) => {
-      if (!filename) return;
-      const normalized = filename.replace(/\\/g, '/');
-
-      // Ignore noise: hidden files and folders (.git, .vscode, …), dependencies, editor temp files
-      if (
-        normalized.split('/').some((part) => part.startsWith('.') || part === 'node_modules') ||
-        normalized.endsWith('~') ||
-        normalized.endsWith('.tmp')
-      ) {
-        return;
-      }
-
-      changedFiles.add(normalized);
+    stopWatching = watchTree(rootDir, (file, isFolder) => {
+      if (file.endsWith('~') || file.endsWith('.tmp')) return; // editor scratch files
+      changed.set(file, isFolder);
       clearTimeout(watchDebounceTimer);
       watchDebounceTimer = setTimeout(() => {
-        const files = [...changedFiles];
-        changedFiles.clear();
-        for (const file of files) {
+        const files = [...changed];
+        changed.clear();
+        for (const [file, isFolder] of files) {
           const eventData = JSON.stringify({
-            type: file === manifestFile ? 'manifest' : 'file',
+            type: file === manifestFile ? 'manifest' : isFolder ? 'folder' : 'file',
             file,
-            isHtml: /\.html?$/i.test(file),
+            isHtml: !isFolder && /\.html?$/i.test(file),
             timestamp: Date.now()
           });
           for (const client of clients) {
@@ -418,7 +489,7 @@ export function createServer(options = {}) {
     rootDir,
     close: () => {
       clearTimeout(watchDebounceTimer);
-      if (watcher) watcher.close();
+      if (stopWatching) stopWatching();
       for (const client of clients) {
         client.end();
       }

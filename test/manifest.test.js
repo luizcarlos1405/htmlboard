@@ -77,32 +77,68 @@ describe('Manifest short form and --root', () => {
     assert.notEqual(res.status, 200);
   });
 
-  test('live reload reports every file saved in the same burst', async () => {
+  // Listens to /api/events; next(until) reads until the text so far passes until (3 s at most).
+  async function listen() {
     const controller = new AbortController();
     const res = await fetch(`${instance.url}/api/events`, { signal: controller.signal });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let text = '';
-    const read = async (until) => {
+    const events = { text: '', close: () => controller.abort() };
+    events.next = async (until) => {
       const deadline = Date.now() + 3000;
-      while (!until(text) && Date.now() < deadline) {
+      while (!until(events.text) && Date.now() < deadline) {
         const { value, done } = await Promise.race([
           reader.read(),
           new Promise((resolve) => setTimeout(() => resolve({ value: undefined, done: false }), 200))
         ]);
         if (done) break;
-        if (value) text += decoder.decode(value, { stream: true });
+        if (value) events.text += decoder.decode(value, { stream: true });
       }
+      return until(events.text);
     };
+    await events.next((t) => t.includes('event: connected'));
+    return events;
+  }
 
-    await read((t) => t.includes('event: connected'));
+  test('live reload reports every file saved in the same burst', async () => {
+    const events = await listen();
     fs.writeFileSync(path.join(root, 'css', 'theme.css'), 'body { color: blue; }');
     fs.writeFileSync(path.join(root, 'design', 'home.html'), '<link rel="stylesheet" href="../css/theme.css"><main>Home 2</main>');
-    await read((t) => t.includes('"css/theme.css"') && t.includes('"design/home.html"'));
-    controller.abort();
+    await events.next((t) => t.includes('"css/theme.css"') && t.includes('"design/home.html"'));
+    events.close();
 
-    assert.match(text, /"file":"css\/theme.css","isHtml":false/);
-    assert.match(text, /"file":"design\/home.html","isHtml":true/);
+    assert.match(events.text, /"type":"file","file":"css\/theme.css","isHtml":false/);
+    assert.match(events.text, /"type":"file","file":"design\/home.html","isHtml":true/);
+  });
+
+  test('live reload keeps following a file saved by replacing it', async () => {
+    const page = path.join(root, 'design', 'home.html');
+    const events = await listen();
+    // Saved the way many editors do: a copy written next to it, renamed over it
+    fs.writeFileSync(`${page}.new`, '<main>Home 3</main>');
+    fs.renameSync(`${page}.new`, page);
+    assert.ok(await events.next((t) => t.includes('"design/home.html"')), 'the replacing save is reported');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    events.text = '';
+    fs.appendFileSync(page, '<p>edited in place</p>');
+    assert.ok(await events.next((t) => t.includes('"design/home.html"')), 'a later save to the new file is reported too');
+    events.close();
+  });
+
+  test('live reload reports folders added and removed', async () => {
+    const events = await listen();
+    fs.mkdirSync(path.join(root, 'design', 'drafts'));
+    fs.writeFileSync(path.join(root, 'design', 'drafts', 'a.html'), '<main>A</main>');
+    assert.ok(await events.next((t) => t.includes('"type":"folder","file":"design/drafts"')));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    events.text = '';
+    fs.writeFileSync(path.join(root, 'design', 'drafts', 'b.html'), '<main>B</main>');
+    assert.ok(await events.next((t) => t.includes('"design/drafts/b.html"')), 'files in a new folder are watched');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    events.text = '';
+    fs.rmSync(path.join(root, 'design', 'drafts'), { recursive: true });
+    assert.ok(await events.next((t) => t.includes('"type":"folder","file":"design/drafts"')), 'a removed folder is reported');
+    events.close();
   });
 
   test('the designs folder must be inside the root', async () => {

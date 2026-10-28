@@ -45,6 +45,6 @@
     "url": "https://github.com/luizcarlos1405/htmlboard/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   }
 }
