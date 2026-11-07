@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startServer, discoverDesigns, loadDesignsManifest } from '../src/index.js';
 
@@ -61,6 +62,12 @@ describe('HtmlBoard Core Functionality', () => {
     assert.ok(html.includes('<title>htmlboard'));
     assert.ok(html.includes('/__explorer/favicon.svg'));
     assert.ok(html.includes('id="viewport"'));
+  });
+
+  test('GET /index.html falls back to the explorer without a root index', async () => {
+    const res = await fetch(`${serverInstance.url}/index.html`);
+    assert.equal(res.status, 200);
+    assert.ok((await res.text()).includes('id="viewport"'));
   });
 
   test('GET /api/designs returns the designs manifest JSON', async () => {
@@ -132,4 +139,34 @@ describe('HtmlBoard Core Functionality', () => {
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'font/woff2');
   });
+});
+
+
+test('GET /index.html serves the root page and injects the probe only for frames', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'htmlboard-index-'));
+  const dir = path.join(root, 'design');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>My page</title><p>Project page</p>');
+  const instance = await startServer({ dir, root, port: 3913 });
+  t.after(async () => {
+    await instance.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const res = await fetch(`${instance.url}/index.html`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  const html = await res.text();
+  assert.ok(html.includes('<title>My page</title>'));
+  assert.ok(!html.includes('/__explorer/probe.js'));
+
+  const framed = await fetch(`${instance.url}/index.html`, {
+    headers: { 'Sec-Fetch-Dest': 'iframe' }
+  });
+  const framedHtml = await framed.text();
+  assert.ok(framedHtml.includes('<title>My page</title>'));
+  assert.ok(framedHtml.includes('/__explorer/probe.js'));
+
+  const explorer = await fetch(`${instance.url}/`);
+  assert.ok((await explorer.text()).includes('id="viewport"'));
 });

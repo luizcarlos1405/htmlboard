@@ -340,7 +340,7 @@ export function createServer(options = {}) {
     }
 
     // Serve HtmlBoard Explorer client files
-    if (pathname === '/' || pathname === '/index.html') {
+    if (pathname === '/') {
       serveStaticFile(path.join(CLIENT_DIR, 'index.html'), req, res);
       return;
     }
@@ -389,6 +389,8 @@ export function createServer(options = {}) {
 
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       serveStaticFile(filePath, req, res, { probe: framed });
+    } else if (pathname === '/index.html') {
+      serveStaticFile(path.join(CLIENT_DIR, 'index.html'), req, res);
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end(`File not found: ${pathname}`);
