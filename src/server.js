@@ -84,6 +84,15 @@ function isInside(base, target) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+/** True when there is a file (not a folder) at filePath */
+function isFile(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** Folders the watcher leaves alone: hidden ones (.git, .vscode, …) and dependencies */
 const skipWatching = (name) => name.startsWith('.') || name === 'node_modules';
 
@@ -339,8 +348,9 @@ export function createServer(options = {}) {
       return;
     }
 
-    // Serve HtmlBoard Explorer client files
-    if (pathname === '/' || pathname === '/index.html') {
+    // The explorer is at /, and at /index.html unless the served folder has an index.html of its
+    // own (a project's page, which designs can load), served then like any other file
+    if (pathname === '/' || (pathname === '/index.html' && !isFile(path.join(rootDir, 'index.html')))) {
       serveStaticFile(path.join(CLIENT_DIR, 'index.html'), req, res);
       return;
     }
@@ -387,7 +397,7 @@ export function createServer(options = {}) {
       }
     }
 
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    if (isFile(filePath)) {
       serveStaticFile(filePath, req, res, { probe: framed });
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain' });

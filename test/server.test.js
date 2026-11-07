@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { startServer, discoverDesigns, loadDesignsManifest } from '../src/index.js';
 
@@ -61,6 +62,12 @@ describe('HtmlBoard Core Functionality', () => {
     assert.ok(html.includes('<title>htmlboard'));
     assert.ok(html.includes('/__explorer/favicon.svg'));
     assert.ok(html.includes('id="viewport"'));
+  });
+
+  test('GET /index.html serves the explorer too when the root has no index.html', async () => {
+    const res = await fetch(`${serverInstance.url}/index.html`);
+    assert.equal(res.status, 200);
+    assert.ok((await res.text()).includes('id="viewport"'));
   });
 
   test('GET /api/designs returns the designs manifest JSON', async () => {
@@ -131,5 +138,40 @@ describe('HtmlBoard Core Functionality', () => {
     const res = await fetch(`${serverInstance.url}/__explorer/fonts/inter.woff2`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'font/woff2');
+  });
+});
+
+// A project with its own page at its root and designs beside it that load that page (../index.html)
+describe('A root with an index.html of its own', () => {
+  const PAGE = '<!doctype html><html><head><title>Mine</title></head><body><p>my page</p></body></html>';
+  let root;
+  let instance;
+
+  before(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'htmlboard-index-'));
+    fs.mkdirSync(path.join(root, 'design'));
+    fs.writeFileSync(path.join(root, 'index.html'), PAGE);
+    fs.writeFileSync(path.join(root, 'design', 'page.html'), '<!doctype html><title>Page</title><script>fetch("../index.html")</script>');
+    instance = await startServer({ dir: path.join(root, 'design'), root, port: 3913 });
+  });
+
+  after(async () => {
+    await instance?.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test('GET / still serves the explorer', async () => {
+    const res = await fetch(`${instance.url}/`);
+    assert.equal(res.status, 200);
+    assert.ok((await res.text()).includes('id="viewport"'));
+  });
+
+  test("GET /index.html serves the root's index.html, with the probe when it's in a frame", async () => {
+    const res = await fetch(`${instance.url}/index.html`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    assert.equal(await res.text(), PAGE);
+    const framed = await (await fetch(`${instance.url}/index.html`, { headers: { 'Sec-Fetch-Dest': 'iframe' } })).text();
+    assert.equal(framed, PAGE.replace('<head>', '<head><script src="/__explorer/probe.js"></script>'));
   });
 });
