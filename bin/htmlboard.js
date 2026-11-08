@@ -9,8 +9,9 @@ import { installSkills, uninstallSkills } from '../src/skills.js';
 import { planMigration, checkMigration, applyMigration } from '../src/migrate.js';
 import { installComponents, COMPONENTS_FOLDER, COMPONENTS_SCRIPT } from '../src/components.js';
 import { buildCatalog, formatCatalog } from '../src/catalog.js';
-import { runCheck, formatReport, hasProblems, CheckError } from '../src/check.js';
-import { PORTS, findCanvases } from '../src/canvases.js';
+import { runCheck, formatReport, hasProblems } from '../src/check.js';
+import { runShot, shotPath, ShotError } from '../src/shot.js';
+import { PORTS, findCanvases, CanvasError } from '../src/canvases.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,6 +84,7 @@ Usage:
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, from the canvas open in a browser
+  htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -104,6 +106,7 @@ Examples:
   htmlboard components designs  # Let ./designs use components (components/tx-item.html is <tx-item>)
   htmlboard catalog designs     # What ./designs share, in a few lines (for your AI agent)
   htmlboard check designs       # Script errors, missing files, cut-off text in ./designs
+  htmlboard shot designs/home.html -s .hero  # The .hero of a design, as a PNG
 
 On the canvas:
   Drag, scroll          Move around
@@ -339,8 +342,85 @@ Options:
     else process.stdout.write(formatReport(report, { name: shownPath(report.dir), url: canvas.url }));
     process.exitCode = hasProblems(report) ? 1 : 0;
   } catch (err) {
-    console.error(err instanceof CheckError ? err.message : `[htmlboard] ${err.message}`);
+    console.error(err instanceof CanvasError ? err.message : `[htmlboard] ${err.message}`);
     process.exitCode = 2;
+  }
+}
+
+async function runShotCommand(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Usage:
+  htmlboard shot <file> [-s <selector>] [--max <px> | --scale <n>] [-o <file.png>] [-p <port>]
+
+Saves a PNG of a design, or of one element in it, and prints where, with its size: for an AI agent
+to look at the design. The canvas running for the designs draws it in a browser, from the files as
+they are now. Without -o, it goes in a folder of the system's temporary files (a new shot of the
+same replaces it).
+
+The image is the design's size (as tall as its page when it has no height of its own). An agent
+pays for an image by its area, so a part (-s) or a smaller image (--max) costs less.
+
+Exits with 1 when it can't take the shot as asked (no element matches, the file isn't a design on
+the canvas), 2 when it can't reach the canvas.
+
+Options:
+  -s, --selector <css>  Only this element: the first one the selector matches
+      --max <px>        The image's longest side at most this many px (e.g. --max 1000)
+      --scale <n>       Image px per CSS px (default 1; 2 for a sharper look at a detail)
+  -o, --output <file>   Where to save the PNG
+  -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
+      --json            Where it went and its size as JSON
+`);
+    return;
+  }
+  let port;
+  let selector;
+  let max;
+  let scale;
+  let output;
+  let asJson = false;
+  const targets = [];
+  const value = (i) => (args[i] === undefined || args[i].startsWith('--') ? null : args[i]);
+  const usage = (message) => {
+    console.error(`[htmlboard] ${message} (see htmlboard shot --help)`);
+    process.exitCode = 2;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, null];
+    const take = () => inline ?? value(++i);
+    if (flag === '--port' || flag === '-p') port = parseInt(take(), 10);
+    else if (flag === '--selector' || flag === '-s') selector = take();
+    else if (flag === '--max') max = Number(take());
+    else if (flag === '--scale') scale = Number(take());
+    else if (flag === '--output' || flag === '-o') output = take();
+    else if (flag === '--json') asJson = true;
+    else if (arg.startsWith('-')) return usage(`Unknown option: ${arg}`);
+    else targets.push(arg);
+  }
+  if (!targets.length) return usage('Say which design to shoot');
+  if (targets.length > 1) return usage(`One design at a time: ${targets.join(', ')}`);
+  if (selector === null || selector === '') return usage('--selector needs a CSS selector');
+  if (output === null || output === '') return usage('--output needs a file');
+  if (max !== undefined && !(max > 0)) return usage('--max needs a number of px');
+  if (scale !== undefined && !(scale > 0)) return usage('--scale needs a number above 0');
+  if (max !== undefined && scale !== undefined) return usage('--max or --scale, not both');
+  try {
+    const { canvas, shot } = await runShot(targets[0], { selector, max, scale, port });
+    const out = output ? path.resolve(output) : shotPath(canvas.dir, shot.file, { selector });
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, shot.png);
+    if (asJson) {
+      const { png, ...about } = shot;
+      console.log(JSON.stringify({ path: out, ...about }, null, 2));
+    } else {
+      console.log(`${shownPath(out)} (${shot.width} × ${shot.height})`);
+      if (shot.matches > 1) console.log(`${selector} matches ${shot.matches} elements: this is the first.`);
+    }
+  } catch (err) {
+    console.error(err instanceof CanvasError || err instanceof ShotError ? err.message : `[htmlboard] ${err.message}`);
+    process.exitCode = err instanceof ShotError ? 1 : 2;
   }
 }
 
@@ -421,6 +501,11 @@ async function main() {
 
   if (args[0] === 'check') {
     await runCheckCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'shot') {
+    await runShotCommand(args.slice(1));
     return;
   }
 

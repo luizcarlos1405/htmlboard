@@ -36,6 +36,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 🧩 **Components**: Each file in `components/` is a custom element named after it (`tx-item.html` is `<tx-item>`), so the sidebar every screen shares is written once and used as one tag: attributes, slots and scoped CSS, built in the light DOM with your `styles.css`, no build step.
 - 🗂️ **A Catalog for Agents**: `htmlboard catalog` reads the project and prints what the designs share in a few lines: each stylesheet's variables and classes, the scripts, every component with its attributes, an example and where it's used. An agent learns your styles and components without reading every file, and since it's read from the files, it is never out of date.
 - 🩺 **Checks for Agents**: `htmlboard check` has the canvas open in your browser load each design again and report, as text, what went wrong: script errors, missing files and components, fonts that didn't load, content cut at the frame's edge, text cut off or spilling out of its box. An agent checks its work without screenshots.
+- 📷 **Shots for Agents**: `htmlboard shot` saves a design, or one element of it, as a PNG and prints where, so an agent can look at what it made without a screenshot tool of its own. A part, or a smaller image, costs it fewer tokens.
 - 📐 **Optional `designs.json`**: Curates when you want it (section titles, order, overrides); designs it doesn't list still show at the end, or don't (`"unlisted": "hide"`). `htmlboard migrate` moves an existing one into the files.
 - 📱 **Device Filters**: **Mobile**, **Tablet** and **Desktop** (and **Components**, or your own categories) lay out just those designs, side by side, to compare them.
 - 🔎 **Search**: Find designs by name, file, tags or section (case and accents don't matter); the others fade out in place.
@@ -84,6 +85,7 @@ Usage:
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, from the canvas open in a browser
+  htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -125,6 +127,9 @@ htmlboard catalog design
 # What went wrong in them: script errors, missing files, cut-off text (the canvas must be open)
 htmlboard check design
 
+# A design's table as a PNG, for an agent to look at
+htmlboard shot design/01-screens/02-customers.html -s table
+
 # See what moving ./design/designs.json into its files would do, then do it
 htmlboard migrate design
 htmlboard migrate design --write
@@ -142,7 +147,7 @@ HtmlBoard ships [Agent Skills](https://agentskills.io) that teach your agent how
 
 | Skill | What it teaches | Read |
 | :--- | :--- | :--- |
-| `htmlboard` | Start the canvas; write, size, name and group designs; shared styles; size and state variants; the catalog and the check | For any design work |
+| `htmlboard` | Start the canvas; write, size, name and group designs; shared styles; size and state variants; the catalog, the check and shots | For any design work |
 | `htmlboard-components` | The component file: attributes, slots, scoped CSS, a script, its first-line example | Before writing or changing a component |
 | `htmlboard-designs-json` | Curating the canvas with `designs.json`, and `htmlboard migrate` | When the designs folder has a `designs.json` |
 
@@ -236,6 +241,20 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
 - **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (colors, spacing, alignment).
 - **It runs in your browser**, so the canvas must be open there. Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
 - A file or a folder checks just those designs: `htmlboard check designs/01-screens/02-customers.html`. It finds the canvas on ports 3000 to 3020 (`-p` for another) and exits with 1 when there are problems, 2 when it can't check. `--json` gives the report as data.
+
+### Looking at a design: `htmlboard shot`
+
+The check doesn't judge looks: colors, spacing, alignment. For those an agent needs to see the design, and `htmlboard shot` gives it a PNG to read:
+
+```text
+$ npx htmlboard shot designs/01-screens/02-customers.html -s table
+/tmp/htmlboard-shots-you/designs-dd2158/01-screens-02-customers--table.png (934 × 358)
+```
+
+- **Drawn by the canvas**, like the check: the design loads afresh, out of sight, in a frame of its size (as tall as its page when it has no height of its own), and your browser draws it as Copy image does, from the files as they are on disk.
+- **A part costs less:** an agent pays for an image by its area, roughly width × height / 750 tokens for Claude, so a 1440 × 900 screen is about 1.7k tokens. `-s <selector>` shoots the first element the CSS selector matches, which is cheaper and sharper; `--max 1000` makes the longest side at most 1000 px for an overview; `--scale 2` doubles the pixels for a close look at a detail.
+- **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design and the selector, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
+- It exits with 1 when it can't take the shot as asked (no element matches the selector, or the file isn't a design on the canvas) and 2 when it can't reach the canvas. What an image can't show, a shot can't either: other sites' images that don't allow it, pages inside the page, shadow DOM.
 
 ---
 
@@ -454,6 +473,17 @@ const { canvas, report } = await runCheck('./designs'); // { port } when it isn'
 console.log(formatReport(report, { url: canvas.url }));
 ```
 
+And a shot (the server answers it at `GET /api/shot?file=<design>&selector=<css>&max=<px>&scale=<n>`, the PNG as base64):
+
+```javascript
+import fs from 'node:fs';
+import { runShot, shotPath } from 'htmlboard';
+
+const { canvas, shot } = await runShot('./designs/home.html', { selector: '.hero', max: 1000 });
+// → shot: { file: 'home.html', title: 'Home', width: 1000, height: 412, matches: 1, png: <Buffer> }
+fs.writeFileSync(shotPath(canvas.dir, shot.file, { selector: '.hero' }), shot.png);
+```
+
 ---
 
 ## 📂 Project Structure
@@ -468,7 +498,9 @@ htmlboard/
 │   ├── designs.js        # Which designs a folder holds: files, their tags, designs.json
 │   ├── components.js     # Components: their previews, `htmlboard components`
 │   ├── catalog.js        # What the designs share: `htmlboard catalog`
+│   ├── canvases.js       # The canvases running on this machine, and asking one
 │   ├── check.js          # `htmlboard check`: asks the canvas, prints its report
+│   ├── shot.js           # `htmlboard shot`: asks the canvas for a PNG
 │   ├── migrate.js        # `htmlboard migrate`
 │   ├── skills.js         # `htmlboard skills` installer
 │   ├── client/           # The canvas
@@ -476,7 +508,8 @@ htmlboard/
 │   │   ├── explorer.css  # Dark chrome, dot grid
 │   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
 │   │   ├── check.js      # Checks the designs in frames out of sight, for `htmlboard check`
-│   │   ├── picture.js    # A design as an image, drawn by the browser (copy, save, zoomed out)
+│   │   ├── shot.js       # A design, or one element, as a PNG, for `htmlboard shot`
+│   │   ├── picture.js    # A design as an image, drawn by the browser (copy, save, zoomed out, shots)
 │   │   ├── probe.js      # Notes script errors and failed loads in the frames the check loads
 │   │   ├── favicon.svg, logo.svg, mark.svg
 │   │   └── fonts/        # Inter and Bricolage Grotesque (OFL)

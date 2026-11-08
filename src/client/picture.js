@@ -19,7 +19,8 @@ const LEFT_OUT = new Set(['script', 'noscript', 'style', 'link', 'source', 'trac
 // What pictures of several designs share, read once for all of them: the files (fonts, images) as
 // data: URLs, and each linked stylesheet's CSS, for each set of its fonts the designs use. Kept until
 // forgetFiles(): after a file changes, or once every picture is made.
-const shared = { files: new Map(), sheets: new Map(), svgs: new Map() };
+const newCache = () => ({ files: new Map(), sheets: new Map(), svgs: new Map() });
+const shared = newCache();
 
 export function forgetFiles() {
   shared.files.clear();
@@ -29,13 +30,25 @@ export function forgetFiles() {
 
 /**
  * The page in `iframe` drawn on a canvas, `width` × `height` CSS px at `scale` device px per CSS px
- * (less when that would make a canvas too big to draw).
+ * (less when that would make a canvas too big to draw). `crop`: only that box of the page (CSS px,
+ * `{ x, y, width, height }`). `fresh`: its files read again, not shared with other pictures (a shot
+ * right after a save, before the canvas has heard of it).
  */
-export async function drawDesign(iframe, { width, height, scale = 1 }) {
+export async function drawDesign(iframe, { width, height, scale = 1, crop = null, fresh = false }) {
+  const canvas = await drawPage(iframe, { width, height, scale, cache: fresh ? newCache() : shared });
+  if (!crop) return canvas;
+  const factor = canvas.width / width; // the scale it was drawn at
+  const part = sized(crop.width * factor, crop.height * factor);
+  part.getContext('2d').drawImage(canvas, crop.x * factor, crop.y * factor, crop.width * factor, crop.height * factor, 0, 0, part.width, part.height);
+  canvas.width = 0; // its pixels can go
+  return part;
+}
+
+async function drawPage(iframe, { width, height, scale, cache }) {
   const doc = await loaded(iframe);
   const win = iframe.contentWindow;
   await doc.fonts?.ready;
-  const files = reader(win);
+  const files = reader(win, cache);
   const [css, root] = await Promise.all([styles(doc, files), copyPage(doc, files)]);
   const style = doc.createElement('style');
   style.textContent = css;
@@ -128,9 +141,10 @@ function loaded(iframe) {
 
 // ---------------------------------------------------------------- the files the page uses
 
-// Reads the files the page uses as data: URLs, each once. `used` holds the files the page loaded, to
-// leave out the fonts it never needed (another alphabet's part of a font); null when it can't tell.
-function reader(win) {
+// Reads the files the page uses as data: URLs, each once (once for all the pictures sharing `cache`).
+// `used` holds the files the page loaded, to leave out the fonts it never needed (another alphabet's
+// part of a font); null when it can't tell.
+function reader(win, cache) {
   let used = null;
   try {
     const entries = win.performance.getEntriesByType('resource');
@@ -138,9 +152,10 @@ function reader(win) {
   } catch {
     // Can't tell
   }
-  const read = shared.files;
+  const read = cache.files;
   return {
     used,
+    sheets: cache.sheets,
     // '' when it can't be read: missing, or another site's that doesn't allow it
     dataUrl(url) {
       if (!read.has(url)) {
@@ -153,8 +168,8 @@ function reader(win) {
     },
     // An SVG file, parsed (a sprite of icons that <use> draws from); null when it can't be read
     svg(url) {
-      if (!shared.svgs.has(url)) {
-        shared.svgs.set(url, fetch(url)
+      if (!cache.svgs.has(url)) {
+        cache.svgs.set(url, fetch(url)
           .then((res) => (res.ok ? res.text() : ''))
           .then((text) => {
             const parsed = text && new DOMParser().parseFromString(text, 'image/svg+xml');
@@ -162,7 +177,7 @@ function reader(win) {
           })
           .catch(() => null));
       }
-      return shared.svgs.get(url);
+      return cache.svgs.get(url);
     },
   };
 }
@@ -217,7 +232,7 @@ async function sheetCss(sheet, base, files, fonts, media = sheet.media?.mediaTex
   let css;
   if (sheet.href) {
     // A linked stylesheet, often the same in every design: read once for each set of its fonts used
-    const saved = shared.sheets.get(sheet.href);
+    const saved = files.sheets.get(sheet.href);
     const key = saved && fontsKey(saved.fonts, files.used);
     if (saved?.css.has(key)) {
       css = saved.css.get(key);
@@ -228,7 +243,7 @@ async function sheetCss(sheet, base, files, fonts, media = sheet.media?.mediaTex
       fonts.push(...own);
       const entry = saved || { fonts: own, css: new Map() };
       entry.css.set(fontsKey(entry.fonts, files.used), css);
-      shared.sheets.set(sheet.href, entry);
+      files.sheets.set(sheet.href, entry);
     }
   } else {
     css = await readSheet(sheet, base, files, fonts);

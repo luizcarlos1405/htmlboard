@@ -312,6 +312,30 @@ export function createServer(options = {}) {
       : { status: 200, body: { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] } }));
   }
 
+  // file: a design's file from the designs folder (a variant's with its query); selector, max and
+  // scale as client/shot.js takes them. The PNG comes back as base64.
+  function startShot(res, params) {
+    const wanted = (params.get('file') || '').replace(/\\/g, '/').replace(/^\.?\/+/, '');
+    const designs = canvasDesigns();
+    const design = designs.find(({ file }) => ownFile(file) === wanted)
+      || designs.find(({ file }) => ownFile(file).split('?')[0] === wanted);
+    if (!design) {
+      json(res, 404, { error: wanted ? `No design on the canvas is ${wanted}` : 'Say which design to shoot (?file=…)' });
+      return;
+    }
+    const positive = (name) => {
+      const value = Number(params.get(name));
+      return Number.isFinite(value) && value > 0 ? value : undefined;
+    };
+    const own = ownFile(design.file);
+    askCanvas(res, 'shot', { design, selector: params.get('selector') || undefined, max: positive('max'), scale: positive('scale') },
+      (shot) => {
+        if (shot.error && shot.kind === 'request') return { status: 422, body: { error: shot.error } };
+        if (shot.error || !shot.png) return { status: 500, body: { error: `The canvas couldn't shoot ${own}: ${shot.error || 'no image'}` } };
+        return { status: 200, body: { file: own, title: design.title, width: shot.width, height: shot.height, matches: shot.matches, png: shot.png } };
+      });
+  }
+
   const server = http.createServer((req, res) => {
     const parsedUrl = new URL(req.url, 'http://localhost');
     let pathname = decodeURIComponent(parsedUrl.pathname);
@@ -319,6 +343,11 @@ export function createServer(options = {}) {
     // API: checking the designs (htmlboard check), which the canvas does
     if (pathname === '/api/check' && req.method === 'GET') {
       startCheck(res, parsedUrl.searchParams.getAll('only'));
+      return;
+    }
+    // API: a design, or an element of it, as a PNG (htmlboard shot), which the canvas draws
+    if (pathname === '/api/shot' && req.method === 'GET') {
+      startShot(res, parsedUrl.searchParams);
       return;
     }
     // The canvas claims a request, then answers it (at /api/check/…, a canvas from before shots)

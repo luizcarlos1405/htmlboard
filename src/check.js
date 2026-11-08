@@ -1,17 +1,12 @@
 import path from 'node:path';
-import { PORTS, get, findCanvases } from './canvases.js';
+import { CanvasError, canvasFor, askCanvas } from './canvases.js';
 
 // `htmlboard check`: the canvas running for a folder, open in a browser, loads its designs and says
 // what went wrong in each (see client/check.js); this finds that canvas, asks it, and puts the
 // answer in a few lines of text.
 
 /** A problem the check couldn't get past (no canvas running, none open in a browser): exit code 2 */
-export class CheckError extends Error {}
-
-const isInside = (base, target) => {
-  const rel = path.relative(base, target);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-};
+export { CanvasError as CheckError };
 
 /**
  * Check designs with the canvas that shows them: a designs folder, a folder in it, or a design's
@@ -24,33 +19,9 @@ const isInside = (base, target) => {
  * @returns {Promise<{canvas: object, report: object}>} The canvas (its url, dir, root) and its report
  */
 export async function runCheck(target, { port } = {}) {
-  const full = path.resolve(target || process.cwd());
-  const canvases = await findCanvases(port ? [Number(port)] : PORTS);
-  // The canvas whose folder holds the target (the deepest one), else the only one inside it
-  const holding = canvases.filter((canvas) => isInside(canvas.dir, full)).sort((a, b) => b.dir.length - a.dir.length);
-  const within = canvases.filter((canvas) => isInside(full, canvas.dir));
-  let canvas = holding[0] ?? (within.length === 1 ? within[0] : null);
-  if (!canvas && port && !target && canvases.length) canvas = canvases[0];
-  if (!canvas) {
-    const shown = path.relative(process.cwd(), full) || '.';
-    if (within.length > 1) {
-      throw new CheckError(`Several canvases show folders in ${shown}: ${within.map((c) => `${path.relative(process.cwd(), c.dir)} (${c.url})`).join(', ')}. Say which one.`);
-    }
-    if (port) throw new CheckError(canvases.length ? `The canvas at ${canvases[0].url} shows ${canvases[0].dir}, not ${shown}.` : `No htmlboard is running at http://localhost:${port}.`);
-    throw new CheckError(`No htmlboard canvas is running for ${shown}. Start it (npx htmlboard <designs folder>) and open it in a browser.`);
-  }
-  const only = holding[0] === canvas && full !== canvas.dir ? path.relative(canvas.dir, full).split(path.sep).join('/') : '';
-  let answer;
-  try {
-    const { status, body } = await get(`http://127.0.0.1:${canvas.port}/api/check${only ? `?only=${encodeURIComponent(only)}` : ''}`);
-    answer = { status, ...JSON.parse(body) };
-  } catch (error) {
-    throw new CheckError(`The canvas at ${canvas.url} didn't answer (${error.message}).`);
-  }
-  if (answer.status === 409) {
-    throw new CheckError(`The canvas at ${canvas.url} isn't open in a browser, and the check runs there. Open it and try again.`);
-  }
-  if (answer.status !== 200) throw new CheckError(`${answer.error || `The canvas answered ${answer.status}`}.`);
+  const { canvas, only } = await canvasFor(target, { port });
+  const answer = await askCanvas(canvas, `/api/check${only ? `?only=${encodeURIComponent(only)}` : ''}`, 'the check');
+  if (answer.status !== 200) throw new CanvasError(`${answer.error || `The canvas answered ${answer.status}`}.`);
   const { status, ...report } = answer;
   return { canvas, report };
 }

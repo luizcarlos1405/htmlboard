@@ -23,10 +23,10 @@ function cli(args, cwd) {
 /**
  * A stand-in for the canvas open in a browser: it listens to the events and answers each check with
  * answer(designs) (a report's designs), as the explorer would. Resolves once connected, to a function
- * that disconnects it; `checks` gets each check it was sent. `route`: where it claims and answers
- * (a canvas from before shots used /api/check/…).
+ * that disconnects it; `checks` gets each check it was sent, `done` each one it claimed and answered.
+ * `route`: where it claims and answers (a canvas from before shots used /api/check/…).
  */
-function fakeCanvas(url, answer, checks = [], { route = 'requests' } = {}) {
+function fakeCanvas(url, answer, checks = [], { route = 'requests', done = [] } = {}) {
   return new Promise((resolve) => {
     const req = http.get(`${url}/api/events`, (res) => {
       let buffer = '';
@@ -42,6 +42,7 @@ function fakeCanvas(url, answer, checks = [], { route = 'requests' } = {}) {
           checks.push(request);
           const claim = await fetch(`${url}/api/${route}/${request.id}/claim`, { method: 'POST' });
           if (!claim.ok) continue;
+          done.push(request.id);
           await fetch(`${url}/api/${route}/${request.id}`, { method: 'POST', body: JSON.stringify(answer(request.designs)) });
         }
       });
@@ -102,10 +103,12 @@ describe('htmlboard check', () => {
   test('the canvas gets the designs to check, the first to claim does it, and its report answers', async () => {
     const checks = [];
     const second = [];
-    const disconnect = await fakeCanvas(server.url, (designs) => ({
+    const done = [];
+    const report = (designs) => ({
       designs: designs.map(({ file, title, width, height }) => ({ file, title, width, height: height ?? null, problems: [] }))
-    }), checks);
-    const late = await fakeCanvas(server.url, () => assert.fail('a check done twice'), second);
+    });
+    const disconnect = await fakeCanvas(server.url, report, checks, { done });
+    const late = await fakeCanvas(server.url, report, second, { done });
     try {
       const res = await fetch(`${server.url}/api/check`);
       assert.equal(res.status, 200);
@@ -114,13 +117,15 @@ describe('htmlboard check', () => {
       // Every design on the canvas, components shown by designs.json too
       assert.deepEqual(report.designs.map((design) => design.file), ['home.html', '01-shop/01-cart.html', '01-shop/02-pay.html', 'components/x-tag.html?preview']);
       assert.deepEqual(checks[0].designs[1], { id: 'shop-cart', file: '01-shop/01-cart.html', title: 'Cart', width: 390, height: 844 });
-      assert.equal(second.length, 1); // it heard of the check too, and lost the claim
+      assert.equal(second.length, 1); // both canvases heard of the check, and one of them did it
+      assert.deepEqual(done, [checks[0].id]);
 
       // A file or a folder of them
       const one = await (await fetch(`${server.url}/api/check?only=01-shop/02-pay.html`)).json();
       assert.deepEqual(one.designs.map((design) => design.file), ['01-shop/02-pay.html']);
       const folder = await (await fetch(`${server.url}/api/check?only=01-shop/`)).json();
       assert.deepEqual(folder.designs.map((design) => design.file), ['01-shop/01-cart.html', '01-shop/02-pay.html']);
+      assert.deepEqual(done, checks.map((check) => check.id)); // each check done once, by one of them
       const none = await fetch(`${server.url}/api/check?only=02-nothing`);
       assert.equal(none.status, 404);
       assert.match((await none.json()).error, /No design on the canvas is in 02-nothing/);

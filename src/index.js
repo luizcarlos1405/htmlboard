@@ -37,6 +37,11 @@ export {
 } from './check.js';
 
 export {
+  runShot,
+  shotPath
+} from './shot.js';
+
+export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,

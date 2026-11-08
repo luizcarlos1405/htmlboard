@@ -6,6 +6,7 @@
 
 import { checkDesigns } from './check.js';
 import { drawDesign, forgetFiles } from './picture.js';
+import { shotDesign, ShotError } from './shot.js';
 
 const FRAME_GAP = 120;    // canvas px between the designs of a section
 const SECTION_GAP = 560;   // canvas px between sections
@@ -1324,13 +1325,15 @@ function connect() {
       // Not ours.
     }
   });
-  source.addEventListener('check', (event) => {
-    try {
-      take(JSON.parse(event.data), runCheck);
-    } catch {
-      // Not ours.
-    }
-  });
+  for (const [kind, run] of [['check', runCheck], ['shot', runShot]]) {
+    source.addEventListener(kind, (event) => {
+      try {
+        take(JSON.parse(event.data), run);
+      } catch {
+        // Not ours.
+      }
+    });
+  }
   // EventSource keeps trying to reconnect by itself.
   source.addEventListener('error', () => {
     lost = true;
@@ -1338,7 +1341,7 @@ function connect() {
   });
 }
 
-// ---------------------------------------------------------------- requests from the server (htmlboard check)
+// ---------------------------------------------------------------- requests from the server (htmlboard check, shot)
 
 let working = Promise.resolve();
 
@@ -1388,6 +1391,18 @@ async function runCheck({ id, designs: boards }) {
   const failing = (report.designs || []).filter((d) => d.problems.some((p) => p.level !== 'note')).length;
   const verdict = !failing ? 'no problems' : designs.length === 1 ? 'problems found' : `${failing} with problems`;
   toast(report.error ? `Couldn't check ${what}: ${report.error}` : `Checked ${what}: ${verdict}`);
+}
+
+async function runShot({ id, ...request }) {
+  const what = `${request.design.title || request.design.file}${request.selector ? ` (${request.selector})` : ''}`;
+  let shot;
+  try {
+    shot = await shotDesign(request);
+  } catch (err) {
+    shot = { error: String(err?.message || err), ...(err instanceof ShotError ? { kind: 'request' } : {}) };
+  }
+  if (!await answer(id, shot)) return;
+  toast(shot.error ? `Couldn't shoot ${what}: ${shot.error}` : `Shot ${what} (${shot.width} × ${shot.height})`);
 }
 
 function setLive(on) {
