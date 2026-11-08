@@ -148,6 +148,37 @@ describe('htmlboard check', () => {
     }
   });
 
+  test("an answer that isn't one is refused, and the request waits for a real one", async () => {
+    const events = await new Promise((resolve) => {
+      const req = http.get(`${server.url}/api/events`, (res) => {
+        let buffer = '';
+        const waiting = [];
+        res.on('data', (chunk) => {
+          buffer += chunk;
+          for (let end = buffer.indexOf('\n\n'); end >= 0; end = buffer.indexOf('\n\n')) {
+            const block = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            if (/^event: connected$/m.test(block)) resolve({ next: () => new Promise((r) => waiting.push(r)), close: () => req.destroy() });
+            if (/^event: check$/m.test(block)) waiting.shift()?.(JSON.parse(block.match(/^data: (.*)$/m)[1]));
+          }
+        });
+      });
+    });
+    try {
+      const asked = events.next();
+      const checked = fetch(`${server.url}/api/check?only=home.html`);
+      const { id } = await asked;
+      assert.equal((await fetch(`${server.url}/api/requests/${id}/claim`, { method: 'POST' })).status, 200);
+      for (const body of ['null', '"text"', '{ not json']) {
+        assert.equal((await fetch(`${server.url}/api/requests/${id}`, { method: 'POST', body })).status, 400, body);
+      }
+      await fetch(`${server.url}/api/requests/${id}`, { method: 'POST', body: JSON.stringify({ designs: [] }) });
+      assert.equal((await checked).status, 200);
+    } finally {
+      events.close();
+    }
+  });
+
   test('a canvas that fails says why', async () => {
     const disconnect = await fakeCanvas(server.url, () => ({ error: 'out of memory' }));
     try {

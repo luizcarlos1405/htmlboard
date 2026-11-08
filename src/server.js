@@ -53,6 +53,7 @@ export function withProbe(page) {
 }
 
 function json(res, status, body) {
+  if (res.headersSent || res.destroyed) return; // answered already, or the asker is gone
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
 }
@@ -258,7 +259,10 @@ export function createServer(options = {}) {
         idleHeadless();
         return;
       }
-      if (res.destroyed) return; // the asker gave up meanwhile
+      if (res.destroyed) {
+        idleHeadless(); // the asker gave up meanwhile: the browser quits after a while
+        return;
+      }
     }
     const id = randomUUID();
     const request = {
@@ -276,6 +280,11 @@ export function createServer(options = {}) {
       idleHeadless();
     });
     send(kind, { id, ...payload });
+  }
+
+  // askCanvas, for a request that is answered whatever goes wrong
+  function asking(res, ...args) {
+    askCanvas(res, ...args).catch((error) => json(res, 500, { error: String(error?.message || error) }));
   }
 
   // headless: the canvas claiming is the one the server opened out of sight
@@ -297,6 +306,9 @@ export function createServer(options = {}) {
     try {
       reply = JSON.parse(await readBody(req, ANSWER_LIMIT));
     } catch {
+      reply = null;
+    }
+    if (!reply || typeof reply !== 'object') {
       json(res, 400, { error: 'Not an answer' });
       return;
     }
@@ -305,7 +317,13 @@ export function createServer(options = {}) {
       json(res, 404, { error: 'No such request' });
       return;
     }
-    const { status, body } = request.answer(reply);
+    let status;
+    let body;
+    try {
+      ({ status, body } = request.answer(reply));
+    } catch (error) {
+      [status, body] = [500, { error: `The canvas's answer didn't make sense (${error.message})` }];
+    }
     // Done out of sight: in which browser
     endRequest(id, status, request.headless && status === 200 && headless.browser ? { ...body, browser: headless.browser.name } : body);
     res.writeHead(204).end();
@@ -409,7 +427,7 @@ export function createServer(options = {}) {
       json(res, 404, { error: wanted.some(Boolean) ? `No design on the canvas is in ${only.join(', ')}` : 'There are no designs to check' });
       return;
     }
-    askCanvas(res, 'check', { designs, theme, themes }, (report) => (report.error
+    asking(res, 'check', { designs, theme, themes }, (report) => (report.error
       ? { status: 500, body: { error: `The canvas couldn't check the designs: ${report.error}` } }
       : { status: 200, body: { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] } }));
   }
@@ -430,7 +448,7 @@ export function createServer(options = {}) {
       return Number.isFinite(value) && value > 0 ? value : undefined;
     };
     const own = ownFile(design.file);
-    askCanvas(res, 'shot', { design, selector: params.get('selector') || undefined, max: positive('max'), scale: positive('scale'), theme: themesAsked(params).theme },
+    asking(res, 'shot', { design, selector: params.get('selector') || undefined, max: positive('max'), scale: positive('scale'), theme: themesAsked(params).theme },
       (shot) => {
         if (shot.error && shot.kind === 'request') return { status: 422, body: { error: shot.error } };
         if (shot.error || !shot.png) return { status: 500, body: { error: `The canvas couldn't shoot ${own}: ${shot.error || 'no image'}` } };
@@ -456,7 +474,7 @@ export function createServer(options = {}) {
     const answering = pathname.match(/^\/api\/(?:requests|check)\/([^/]+)(\/claim)?$/);
     if (answering && req.method === 'POST') {
       if (answering[2]) claimRequest(answering[1], res, { headless: parsedUrl.searchParams.has('headless') });
-      else finishRequest(answering[1], req, res);
+      else finishRequest(answering[1], req, res).catch(() => json(res, 500, { error: "Couldn't take the answer" }));
       return;
     }
 

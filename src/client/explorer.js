@@ -1150,7 +1150,8 @@ function setTheme(value) {
   forgetFiles(); // pictures read the stylesheets again, in this theme
   for (const design of state.designs) {
     showTheme(design.iframe, themeFor(design.themes, value));
-    if (!value && before && design.frame.isConnected && design.loadedAt) reloadFrame(design);
+    // Back to its own: its page loads again without the theme (one still loading has it from the probe)
+    if (!value && before && design.frame.isConnected) reloadFrame(design);
   }
   paintThemeButton();
   paint(); // the pictures shown zoomed out are of the theme before
