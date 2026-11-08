@@ -130,7 +130,7 @@ describe('htmlboard shot', () => {
       const saved = shotPath(path.join(dir, 'designs'), 'home.html', { selector: '.card' });
       assert.equal(selected.stdout, `${saved} (1 × 1)\n.card matches 3 elements: this is the first.\n`);
       assert.deepEqual(fs.readFileSync(saved), PNG);
-      fs.rmSync(saved);
+      fs.rmSync(path.dirname(saved), { recursive: true }); // the folder of this test's designs
 
       const json = JSON.parse((await cli(['designs/home.html', '-p', '3951', '-o', 'home.png', '--json'], dir)).stdout);
       assert.deepEqual(json, { path: path.join(dir, 'home.png'), file: 'home.html', title: 'Home', width: 1, height: 1, matches: 0 });

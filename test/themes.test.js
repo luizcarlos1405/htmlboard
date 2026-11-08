@@ -126,7 +126,7 @@ describe('Checks and shots in a theme', () => {
       assert.equal(shot.code, 0, shot.stderr);
       assert.equal(shot.stdout, `${shotPath(path.join(dir, 'designs'), 'home.html', { theme: 'night' })} (1 × 1)\n`);
       assert.equal(asked[2].theme, 'night');
-      fs.rmSync(shot.stdout.split(' (')[0]);
+      fs.rmSync(path.dirname(shot.stdout.split(' (')[0]), { recursive: true }); // the folder of this test's designs
     } finally {
       disconnect();
     }
