@@ -5,6 +5,7 @@
 
 import { hiddenBox, openDesign } from './check.js';
 import { drawDesign } from './picture.js';
+import { themeFor } from './theme.js';
 
 const DEFAULT_SIZE = [1200, 800]; // as the canvas: a design whose entry gives no size
 const FIT_HEIGHT = 100; // a frame that fits its page however short (a component's) starts this tall
@@ -13,16 +14,17 @@ const FIT_HEIGHT = 100; // a frame that fits its page however short (a component
 export class ShotError extends Error {}
 
 /**
- * A design as a PNG: `{ png, width, height, matches }` (png: base64; matches: how many elements the
- * selector matched, the first one shot).
+ * A design as a PNG: `{ png, width, height, matches, theme }` (png: base64; matches: how many
+ * elements the selector matched, the first one shot).
  *
  * @param {object} request
- * @param {{ file: string, width?: number, height?: number, fit?: boolean }} request.design
+ * @param {{ file: string, width?: number, height?: number, fit?: boolean, themes?: object }} request.design
  * @param {string} [request.selector] Only this element: the first the CSS selector matches
  * @param {number} [request.max] The longest side at most this many px
  * @param {number} [request.scale] px per CSS px (default 1; ignored with max)
+ * @param {string} [request.theme] The theme to show it in (see theme.js); default: the page's own
  */
-export async function shotDesign({ design, selector, max, scale }) {
+export async function shotDesign({ design, selector, max, scale, theme }) {
   const width = Number(design.width) || DEFAULT_SIZE[0];
   const height = Number(design.height) || 0;
   const box = hiddenBox();
@@ -32,7 +34,7 @@ export async function shotDesign({ design, selector, max, scale }) {
       width,
       height,
       frameHeight: height || (design.fit ? FIT_HEIGHT : DEFAULT_SIZE[1]),
-    }, box, { grow: true });
+    }, box, { grow: true, theme: themeFor(design.themes, theme) });
     if (!page.doc) throw new Error('the page shows nothing');
     const frame = { width, height: parseFloat(page.frame.style.height) };
     let area = { x: 0, y: 0, ...frame };
@@ -63,7 +65,7 @@ export async function shotDesign({ design, selector, max, scale }) {
     });
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('the image is too big');
-    return { png: await base64(blob), width: canvas.width, height: canvas.height, matches };
+    return { png: await base64(blob), width: canvas.width, height: canvas.height, matches, ...(theme ? { theme } : {}) };
   } finally {
     box.remove();
   }

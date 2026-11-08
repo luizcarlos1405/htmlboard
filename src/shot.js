@@ -21,12 +21,13 @@ export class ShotError extends Error {}
  * @param {number} [options.scale] Image px per CSS px (default 1; not with max)
  * @param {number} [options.port] The canvas's port (default: looked for on 3000 to 3020)
  * @param {string} [options.root] With no canvas running: the folder to serve files from, as --root
+ * @param {string} [options.theme] Show it in this theme (see the canvas's theme switch)
  * @returns {Promise<{canvas: object, shot: {file: string, title: string, width: number, height: number, matches: number, png: Buffer}}>}
  *   The canvas (its url, dir, root; local: started for the shot) and the shot: its file from the
  *   designs folder, its size in px, how many elements the selector matched, the image, and the
  *   headless browser it was drawn in (browser), if it was.
  */
-export async function runShot(file, { selector, max, scale, port, root } = {}) {
+export async function runShot(file, { selector, max, scale, port, root, theme } = {}) {
   if (!file) throw new ShotError('Say which design to shoot.');
   return withCanvas(file, { port, root }, async (canvas, only) => {
     if (!only) throw new ShotError(`${file} is the designs folder: say which design to shoot.`);
@@ -34,6 +35,7 @@ export async function runShot(file, { selector, max, scale, port, root } = {}) {
     if (selector) query.set('selector', selector);
     if (max) query.set('max', String(max));
     if (scale) query.set('scale', String(scale));
+    if (theme) query.set('theme', theme);
     const answer = await askCanvas(canvas, `/api/shot?${query}`, 'the shot');
     if ([404, 422, 500].includes(answer.status)) throw new ShotError(`${answer.error}.`);
     if (answer.status !== 200) throw new CanvasError(`${answer.error || `The canvas answered ${answer.status}`}.`);
@@ -47,14 +49,15 @@ const slug = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').re
 /**
  * Where a shot goes when it isn't told: the system's temporary folder, in a folder of the user's and
  * one for the designs folder (so that two projects' shots of `home.html` don't meet), named after
- * the design and the selector. A new shot of the same replaces it.
+ * the design, the selector and the theme. A new shot of the same replaces it.
  *
  * @param {string} dir The designs folder
  * @param {string} file The design's file from it
  * @param {object} [options]
  * @param {string} [options.selector]
+ * @param {string} [options.theme]
  */
-export function shotPath(dir, file, { selector } = {}) {
+export function shotPath(dir, file, { selector, theme } = {}) {
   let user = 'user';
   try {
     user = os.userInfo().username || user;
@@ -63,5 +66,6 @@ export function shotPath(dir, file, { selector } = {}) {
   }
   const project = `${slug(path.basename(dir)) || 'designs'}-${createHash('sha1').update(dir).digest('hex').slice(0, 6)}`;
   const name = slug(file.replace(/\.html?(?=$|\?)/i, '')) || 'design';
-  return path.join(os.tmpdir(), `htmlboard-shots-${slug(user) || 'user'}`, project, `${name}${selector ? `--${slug(selector)}` : ''}.png`);
+  return path.join(os.tmpdir(), `htmlboard-shots-${slug(user) || 'user'}`, project,
+    `${name}${selector ? `--${slug(selector)}` : ''}${theme ? `.${slug(theme)}` : ''}.png`);
 }

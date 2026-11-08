@@ -1,7 +1,27 @@
-// probe.js: notes what goes wrong while a design's page builds (script errors, console.error, files
-// that don't load), for `htmlboard check`. The server puts it first in the <head> of the pages shown
-// in frames, so it hears everything from the start. It only listens in the frames the check loads
-// (named htmlboard-check): the canvas's own frames, and a page opened on its own, are left as they are.
+// probe.js: the server puts it first in the <head> of the pages shown in frames, so it runs before
+// anything else in them.
+//
+// The theme the canvas shows the page in (its theme switch, check and shot --theme), which its frame
+// says: set on <html> before the page's own scripts run, so they see it (see client/theme.js).
+(() => {
+  try {
+    const theme = JSON.parse(window.frameElement?.dataset.htmlboardTheme || 'null');
+    if (!theme?.attribute || !theme.value) return;
+    const root = document.documentElement;
+    if (theme.attribute === 'class') {
+      for (const other of theme.values || []) if (other !== theme.value) root.classList.remove(other);
+      root.classList.add(theme.value);
+    } else {
+      root.setAttribute(theme.attribute, theme.value);
+    }
+  } catch {
+    // Not in a frame of the canvas's
+  }
+})();
+
+// What goes wrong while a design's page builds (script errors, console.error, files that don't
+// load), for `htmlboard check`, heard from the start. Only in the frames the check loads (named
+// htmlboard-check): the canvas's own frames, and a page opened on its own, are left as they are.
 (() => {
   if (window.name !== 'htmlboard-check') return;
   const MOST = 100;

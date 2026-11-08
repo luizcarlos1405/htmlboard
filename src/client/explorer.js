@@ -7,6 +7,7 @@
 import { checkDesigns } from './check.js';
 import { drawDesign, forgetFiles } from './picture.js';
 import { shotDesign, ShotError } from './shot.js';
+import { themeFor, showTheme, themesOf, inOrder } from './theme.js';
 
 const FRAME_GAP = 120;    // canvas px between the designs of a section
 const SECTION_GAP = 560;   // canvas px between sections
@@ -48,6 +49,7 @@ const els = {
   version: $('version'), sectionsBar: $('sections-bar'), expandAll: $('expand-all'), collapseAll: $('collapse-all'),
   showAll: $('show-all'), hideAll: $('hide-all'), empty: $('empty'), emptyText: $('empty-text'),
   actions: $('actions'), copyImage: $('copy-image'), saveImage: $('save-image'),
+  theme: $('theme'), themeName: $('theme-name'),
 };
 
 const state = {
@@ -64,6 +66,9 @@ const state = {
   query: [],            // the search's words, folded
   category: '',         // the filter: a category, or '' for all
   pictures: false,      // zoomed out: designs show as pictures
+  theme: null,          // the theme every design shows (the theme switch), or null: each page's own
+  themes: [],           // the themes the designs have: the ones they say, else the ones in their stylesheets
+  themeConfig: null,    // how designs.json says themes apply, for the designs that don't say
   // What the first view fitted ('all' or a design). Until the user moves the canvas, it is fitted
   // again when the designs' real sizes come in.
   autoFit: null,
@@ -123,6 +128,7 @@ function build(manifest) {
   for (const node of els.overlay.querySelectorAll('.label, .section-title')) node.remove();
   state.manifest = JSON.stringify(manifest);
   state.autoDiscovered = Boolean(manifest.autoDiscovered);
+  state.themeConfig = manifest.themes || null;
   state.sections = [];
   state.designs = [];
   state.selected = null;
@@ -174,6 +180,7 @@ function build(manifest) {
   }
   buildFilters();
   applySearch();
+  updateThemes();
   layout();
 }
 
@@ -197,9 +204,11 @@ function makeDesign(board, section) {
     loadedAt: 0,
     changedAt: 0,
     drawnSince: 0,
-    pictured: null,  // the picture it has: { url, w, h, loads } (the size and load it was made at)
+    pictured: null,  // the picture it has: { url, w, h, loads, theme } (the size, load and theme it was made at)
     picturing: false,
     failedAt: -1,    // the load a picture couldn't be made of
+    themes: board.themes || state.themeConfig, // how its themes apply, when it or designs.json says
+    found: [],       // the themes its stylesheets have, found as its page loads
   };
   design.search = fold([design.title, file, board.description, board.category, ...(board.tags || []), section.name]
     .filter(Boolean).join(' '));
@@ -209,6 +218,7 @@ function makeDesign(board, section) {
   design.iframe.title = design.title;
   design.iframe.tabIndex = -1;
   design.iframe.setAttribute('scrolling', 'no');
+  showTheme(design.iframe, themeFor(design.themes, state.theme)); // its page starts in it
   design.iframe.addEventListener('load', () => onLoad(design));
   design.iframe.src = urlOf(file); // loads once placeFrames puts it on the canvas
   design.page.append(design.iframe);
@@ -248,6 +258,11 @@ function onLoad(design) {
   paintFrame(design);
   schedulePictures();
   if (!doc) return;
+  if (state.theme) showTheme(design.iframe, themeFor(design.themes, state.theme)); // again, in case its scripts set their own
+  if (!design.themes?.values?.length) {
+    design.found = themesOf(doc, design.themes?.attribute);
+    updateThemes();
+  }
   if (design.autoHeight) {
     growToPage(design);
     doc.fonts?.ready.then(() => growToPage(design));
@@ -1024,7 +1039,8 @@ function paintFrame(design) {
 // Whether a design's picture shows its page as it is: made of this load, at this size
 function isFresh(design) {
   const { pictured } = design;
-  return Boolean(pictured) && pictured.loads === design.loads && pictured.w === design.w && pictured.h === design.h;
+  return Boolean(pictured) && pictured.loads === design.loads && pictured.w === design.w && pictured.h === design.h
+    && pictured.theme === state.theme;
 }
 
 let picturing = 0; // pictures being made
@@ -1077,6 +1093,7 @@ function nextPicture() {
 // Sharp up to PICTURE_ZOOM, at the screen's pixel density (twice on a Retina screen)
 async function takePicture(design) {
   const { loads, w, h } = design;
+  const { theme } = state;
   const scale = PICTURE_ZOOM * clamp(window.devicePixelRatio || 1, 1, 2);
   let url = '';
   try {
@@ -1093,15 +1110,58 @@ async function takePicture(design) {
     if (design.loads === loads) design.failedAt = loads; // its page stays drawn, until it loads again
     return;
   }
-  // Its page reloaded, or the design changed size, while it was made (or the canvas was rebuilt)
-  if (design.loads !== loads || design.w !== w || design.h !== h || !state.designs.includes(design)) {
+  // Its page reloaded, or the design changed size or theme, while it was made (or the canvas was rebuilt)
+  if (design.loads !== loads || design.w !== w || design.h !== h || state.theme !== theme || !state.designs.includes(design)) {
     URL.revokeObjectURL(url);
     return;
   }
   if (design.pictured) URL.revokeObjectURL(design.pictured.url);
-  design.pictured = { url, w, h, loads };
+  design.pictured = { url, w, h, loads, theme };
   design.picture.src = url;
   paintFrame(design);
+}
+
+// ---------------------------------------------------------------- themes
+
+// One switch shows every design in a theme the designs have (see theme.js): the ones they or
+// designs.json say, else the ones their stylesheets have, found as their pages load. A page shown
+// in a theme starts in it when it loads again; back to its own, it loads again without.
+
+function updateThemes() {
+  const themes = inOrder(state.designs.flatMap((d) => (d.themes?.values?.length ? d.themes.values : d.found)));
+  if (state.theme && !themes.includes(state.theme)) themes.push(state.theme); // the one on stays listed
+  if (themes.join('\n') === state.themes.join('\n')) return;
+  state.themes = themes;
+  paintThemeButton();
+}
+
+function paintThemeButton() {
+  els.theme.hidden = !state.themes.length;
+  els.themeName.textContent = state.theme || '';
+  els.theme.setAttribute('aria-pressed', String(Boolean(state.theme)));
+  els.theme.title = `Theme for every design: ${state.theme || 'each page’s own'} (T)`;
+}
+
+function setTheme(value) {
+  if (value === state.theme) return;
+  const before = state.theme;
+  state.theme = value;
+  writeStore('theme', value);
+  forgetFiles(); // pictures read the stylesheets again, in this theme
+  for (const design of state.designs) {
+    showTheme(design.iframe, themeFor(design.themes, value));
+    if (!value && before && design.frame.isConnected && design.loadedAt) reloadFrame(design);
+  }
+  paintThemeButton();
+  paint(); // the pictures shown zoomed out are of the theme before
+  toast(value ? `Every design in ${value}` : 'Each design in its own theme');
+}
+
+// The next theme, or the one before (step -1); after the last, each page's own
+function nextTheme(step = 1) {
+  const options = [null, ...state.themes];
+  const at = Math.max(0, options.indexOf(state.theme));
+  setTheme(options[(at + step + options.length) % options.length]);
 }
 
 // ---------------------------------------------------------------- panels and messages
@@ -1216,6 +1276,7 @@ function patch(manifest) {
     design.category = board.category || '';
     design.search = fold([design.title, design.file, board.description, board.category, ...(board.tags || []), section.name]
       .filter(Boolean).join(' '));
+    design.themes = board.themes || manifest.themes || null;
     const autoHeight = !Number(board.height);
     const width = Number(board.width) || design.w;
     if (autoHeight && (!design.autoHeight || width !== design.w)) remeasure.push(design);
@@ -1225,8 +1286,10 @@ function patch(manifest) {
     showDims(design);
   });
   state.manifest = JSON.stringify(manifest);
+  state.themeConfig = manifest.themes || null;
   buildFilters();
   applySearch();
+  updateThemes();
   layout();
   remeasure.forEach(growToPage);
 }
@@ -1374,7 +1437,7 @@ async function answer(id, reply) {
   }
 }
 
-async function runCheck({ id, designs: boards }) {
+async function runCheck({ id, designs: boards, theme, themes }) {
   const designs = boards.map((board) => {
     const shown = state.designs.find((d) => d.id === board.id); // a size variant has its file's URL
     const height = Number(board.height) || 0;
@@ -1387,13 +1450,14 @@ async function runCheck({ id, designs: boards }) {
       // to its page where there's no canvas (out of sight)
       frameHeight: height || (shown?.autoHeight ? shown.h : board.fit ? FIT_HEIGHT : DEFAULT_SIZE[1]),
       grow: !height && !shown,
+      themes: board.themes,
     };
   });
   const what = designs.length === 1 ? designs[0].title : `${designs.length} designs`;
   toast(`Checking ${what}…`);
   let report;
   try {
-    report = { designs: await checkDesigns(designs) };
+    report = { designs: await checkDesigns(designs, { theme, themes }) };
   } catch (err) {
     report = { error: String(err?.message || err) };
   }
@@ -1630,6 +1694,7 @@ function wire() {
       } else if (state.category) setCategory('');
     } else if (key === 'Enter' && !onControl) openSelected();
     else if (key === 'c' || key === 'C') copyImage(state.selected || state.hover);
+    else if ((key === 't' || key === 'T') && state.themes.length) nextTheme(event.shiftKey ? -1 : 1);
     else if (key === 's' || key === 'S') saveImage(state.selected || state.hover, { choose: event.shiftKey });
     else if (key === 'r' || key === 'R') reloadAll();
     else if (key === '/') {
@@ -1699,6 +1764,7 @@ function wire() {
   els.hideAll.addEventListener('click', () => setHidden(() => true));
   $('empty-show').addEventListener('click', () => setHidden(() => false));
   els.copyImage.addEventListener('click', () => copyImage(state.actions));
+  els.theme.addEventListener('click', (event) => nextTheme(event.shiftKey ? -1 : 1));
   els.saveImage.addEventListener('click', (event) => saveImage(state.actions, { choose: event.shiftKey }));
   if (!window.showDirectoryPicker) els.saveImage.title = 'Download as an image (S)';
   for (const id of ['zoom-in', 'zoom-out', 'zoom-reset', 'fit-all']) {
@@ -1725,6 +1791,7 @@ async function start() {
     manifest = designs;
     if (health.dir) storePrefix = `htmlboard:${health.dir}:`;
     if (health.version) els.version.textContent = health.version;
+    state.theme = readStore('theme') || null;
   } catch (err) {
     showNotice('Could not load the designs', `${err.message}. Is htmlboard still running?`);
     return;

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { COMPONENTS_FOLDER, isPage, isTagName } from './components.js';
-import { attributes, scanDesigns } from './designs.js';
+import { attributes, scanDesigns, normalizeThemes } from './designs.js';
 
 // The catalog: what the designs in a folder share, read from the files every time, so it is never
 // out of date. It describes whatever the project has and asks for none of it:
@@ -9,7 +9,8 @@ import { attributes, scanDesigns } from './designs.js';
 //   - the stylesheets the designs link, whatever their name or folder (and the ones at the top of
 //     the folder, linked or not yet), with each local one's variables, classes, @keyframes and fonts;
 //   - the scripts the designs load;
-//   - the components in components/, with their attributes, slots, example and where they're used.
+//   - the components in components/, with their attributes, slots, example and where they're used;
+//   - the themes the designs have (as designs.json or the designs say, else as their stylesheets do).
 //
 // As text it takes a few lines (`htmlboard catalog`), so an agent learns what exists without
 // reading every file.
@@ -127,7 +128,9 @@ const unquote = (text) => text.trim().replace(/^(["'])(.*)\1$/, '$2');
 
 /**
  * What a stylesheet defines: its variables (with the selector that declares them), its classes,
- * @keyframes and font families, and what it @imports.
+ * @keyframes and font families, and what it @imports. And what its themes could be: the values its
+ * selectors give attributes (`[data-theme="dark"]`), the classes they give <html>, and whether it
+ * follows the system's light and dark modes (prefers-color-scheme, light-dark(), color-scheme).
  */
 function readStylesheet(css) {
   const tree = parseCss(css);
@@ -135,7 +138,22 @@ function readStylesheet(css) {
   const classes = new Set();
   const keyframes = new Set();
   const fonts = new Set();
+  const valued = new Map(); // attribute → the values selectors give it
+  const rootClasses = new Set();
+  let scheme = false;
+  const select = (selector) => {
+    for (const [, name, ...values] of selector.matchAll(ATTRIBUTE_SELECTOR)) {
+      const value = values.find((v) => v !== undefined);
+      if (value === undefined) continue;
+      if (!valued.has(name.toLowerCase())) valued.set(name.toLowerCase(), new Set());
+      valued.get(name.toLowerCase()).add(value);
+    }
+    for (const [, names] of selector.matchAll(/(?:^|[\s,>+~(])(?:html|:root)((?:\.[\w-]+)+)/g)) {
+      for (const name of names.split('.').filter(Boolean)) rootClasses.add(name);
+    }
+  };
   const declare = (where, text) => {
+    if (/light-dark\(|color-scheme\s*:\s*(light\s+dark|dark\s+light)/i.test(text)) scheme = true;
     for (const declaration of splitTopLevel(text, ';')) {
       const match = declaration.match(/^\s*(--[^:\s]+)\s*:([\s\S]*)$/);
       if (!match) continue;
@@ -152,6 +170,7 @@ function readStylesheet(css) {
           const family = splitTopLevel(text, ';').map((d) => d.match(/^\s*font-family\s*:([\s\S]*)$/i)?.[1]).find(Boolean);
           if (family) fonts.add(unquote(family));
         } else if (GROUPING_RULES.has(name)) {
+          if (/prefers-color-scheme/i.test(prelude)) scheme = true;
           const where = at ? `${at} ${prelude}` : prelude;
           if (selector) declare(`${where} ${selector}`, text);
           walk(inner, where, selector);
@@ -159,6 +178,7 @@ function readStylesheet(css) {
       } else if (prelude) {
         const resolved = selector ? nest(selector, prelude) : prelude;
         for (const name of classesOf(prelude)) classes.add(name);
+        select(resolved);
         declare(at ? `${at} ${resolved}` : resolved, text);
         walk(inner, at, resolved);
       }
@@ -170,8 +190,15 @@ function readStylesheet(css) {
     classes: [...classes],
     keyframes: [...keyframes],
     fonts: [...fonts],
-    imports: importsOf(tree)
+    imports: importsOf(tree),
+    themes: { valued, rootClasses, scheme }
   };
+}
+
+/** Themes in the order the canvas's switch shows them: light, dark, then the others as found */
+function inOrder(values) {
+  const unique = [...new Set(values)];
+  return [...['light', 'dark'].filter((value) => unique.includes(value)), ...unique.filter((value) => value !== 'light' && value !== 'dark')];
 }
 
 // ---------------------------------------------------------------- pages and components
@@ -272,6 +299,7 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
   };
 
   const stylesheets = new Map(); // URL or file → what it is and who loads it
+  const hints = new Map(); // a local stylesheet's entry → what its themes could be (see readStylesheet)
   const addStylesheet = (where, user) => {
     if (!where) return;
     let entry = stylesheets.get(where.key);
@@ -282,8 +310,9 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
       if (where.external) entry.external = true;
       else if (css === null) entry.missing = true;
       else {
-        const { imports, ...defines } = readStylesheet(css);
+        const { imports, themes, ...defines } = readStylesheet(css);
         Object.assign(entry, defines);
+        hints.set(entry, themes);
         for (const href of imports) addStylesheet(locate(href, where.file), { stylesheet: entry.path });
       }
     }
@@ -301,7 +330,8 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
     addUser(scripts.get(where.key), user);
   };
 
-  const designs = scanDesigns(designsDir).filter((design) => !design.variantOf).map((design) => design.file);
+  const scanned = scanDesigns(designsDir);
+  const designs = scanned.filter((design) => !design.variantOf).map((design) => design.file);
   const pages = designs.map((file) => {
     const full = path.join(designsDir, file);
     const html = (read(full) ?? '').replace(/<!--[\s\S]*?-->/g, '');
@@ -350,8 +380,45 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
     designs,
     stylesheets: [...stylesheets.values()],
     scripts: [...scripts.values()],
-    components
+    components,
+    themes: findThemes(designsDir, scanned, hints)
   };
+}
+
+/**
+ * The themes the designs have: as designs.json says (how they apply, and which), else a design (its
+ * <meta name="htmlboard:themes">), else as the stylesheets do: the values their selectors give the
+ * attribute (data-theme, unless said), and light and dark when they follow the system's. Null when
+ * there are none.
+ */
+function findThemes(designsDir, scanned, hints) {
+  let config = null;
+  let said = null;
+  try {
+    config = normalizeThemes(JSON.parse(fs.readFileSync(path.join(designsDir, 'designs.json'), 'utf8')).themes) ?? null;
+    if (config) said = 'designs.json';
+  } catch {
+    // No designs.json, or not one that can be read
+  }
+  if (!config) {
+    const design = scanned.find((d) => d.themes);
+    if (design) [config, said] = [design.themes, design.file];
+  }
+  const attribute = config?.attribute || 'data-theme';
+  if (config?.values.length) return { attribute, values: inOrder(config.values), byAttribute: true, scheme: false, from: [said] };
+  const values = [];
+  const from = said ? [said] : [];
+  let byAttribute = false;
+  let scheme = false;
+  for (const [entry, hint] of hints) {
+    const found = attribute === 'class' ? [...hint.rootClasses] : [...(hint.valued.get(attribute) ?? [])];
+    if (found.length) byAttribute = true;
+    if (hint.scheme) scheme = true;
+    if (found.length || hint.scheme) from.push(entry.path);
+    values.push(...found);
+  }
+  if (scheme) values.push('light', 'dark');
+  return values.length ? { attribute, values: inOrder(values), byAttribute, scheme, from } : null;
 }
 
 // ---------------------------------------------------------------- as text
@@ -416,6 +483,14 @@ export function formatCatalog(catalog, { name = catalog.dir } = {}) {
     lines[0] += ' Paths below are from this folder.';
   } else if (total) {
     lines.push('', 'Nothing shared yet: no stylesheet, script or component.');
+  }
+  if (catalog.themes) {
+    const { attribute, values, byAttribute, scheme, from } = catalog.themes;
+    const how = [
+      byAttribute && (attribute === 'class' ? 'classes on <html>' : `${attribute} on <html>`),
+      scheme && `${byAttribute ? 'and ' : ''}the system’s light and dark modes`,
+    ].filter(Boolean).join(', ');
+    lines.push('', `Themes: ${values.join(', ')} (${how}${from.length ? `; in ${from.join(', ')}` : ''}): check --themes all, shot --theme <name>`);
   }
   if (catalog.stylesheets.length) {
     lines.push('', 'Stylesheets');

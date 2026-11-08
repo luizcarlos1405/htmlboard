@@ -343,7 +343,10 @@ kbd {
 
 /* The canvas takes every pointer event (wheel included, so Ctrl + scroll never zooms the page):
    designs are pictures here, and Open shows one on its own. */
-.frame iframe { display: block; width: 100%; height: 100%; border: 0; pointer-events: none; }
+/* color-scheme is inherited: without normal, the frames would take the canvas's dark, and pages that
+   follow the system's mode (prefers-color-scheme) would show dark whatever it is. The theme switch sets
+   light or dark here (see theme.js). */
+.frame iframe { display: block; width: 100%; height: 100%; border: 0; pointer-events: none; color-scheme: normal; }
 
 /* Designs the search leaves out stay in place, faded. */
 .frame.is-dimmed { opacity: 0.2; }
@@ -482,6 +485,8 @@ kbd {
 }
 
 .zoom { min-width: 58px; font-variant-numeric: tabular-nums; }
+
+.tool span:empty { display: none; }
 
 .sep { width: 1px; height: 20px; margin: 0 4px; background: var(--x-line); }
 

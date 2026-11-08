@@ -19,12 +19,19 @@ export { CanvasError as CheckError };
  * @param {object} [options]
  * @param {number} [options.port] The canvas's port (default: looked for on 3000 to 3020)
  * @param {string} [options.root] With no canvas running: the folder to serve files from, as --root
+ * @param {string} [options.theme] Check them in this theme (see the canvas's theme switch)
+ * @param {string|string[]} [options.themes] Check each in these themes: 'all' (its default and every
+ *   theme it has) or a list; a problem found in some of them only says which
  * @returns {Promise<{canvas: object, report: object}>} The canvas (its url, dir, root; local: started
  *   for the check) and its report (browser: the headless browser it ran in, if it did)
  */
-export async function runCheck(target, { port, root } = {}) {
+export async function runCheck(target, { port, root, theme, themes } = {}) {
+  const query = new URLSearchParams();
+  if (theme) query.set('theme', theme);
+  if (themes) query.set('themes', Array.isArray(themes) ? themes.join(',') : themes);
   return withCanvas(target, { port, root }, async (canvas, only) => {
-    const answer = await askCanvas(canvas, `/api/check${only ? `?only=${encodeURIComponent(only)}` : ''}`, 'the check');
+    if (only) query.set('only', only);
+    const answer = await askCanvas(canvas, `/api/check${String(query) ? `?${query}` : ''}`, 'the check');
     if (answer.status !== 200) throw new CanvasError(`${answer.error || `The canvas answered ${answer.status}`}.`);
     const { status, ...report } = answer;
     return { canvas, report };
@@ -61,13 +68,15 @@ export function formatReport(report, { name = report.dir, url, local = false } =
   const browser = report.browser ? `headless ${report.browser}` : '';
   const where = local ? ` (in ${browser || 'a browser'}, as no canvas was running)`
     : url ? ` (the canvas at ${url}${browser ? `, in ${browser}` : ''})` : '';
-  const lines = [`Checked ${count(designs.length, 'design')} in ${name}${where}: ${
+  const themes = [...new Set(designs.flatMap((design) => design.themes || []))];
+  const inThemes = !themes.length ? '' : themes.length === 1 ? `, in ${themes[0]}` : `, in ${list(themes)}`;
+  const lines = [`Checked ${count(designs.length, 'design')} in ${name}${inThemes}${where}: ${
     failing ? `${failing} with problems` : 'no problems found'}${noted ? `, ${noted} with notes` : ''}.`];
   const order = (problem) => LEVELS.indexOf(problem.level) * KINDS.length + KINDS.indexOf(problem.kind);
   for (const design of designs.filter((d) => d.problems.length)) {
     lines.push('', `${show(design.file)}${design.title ? ` · ${design.title}` : ''}`);
     for (const problem of [...design.problems].sort((a, b) => order(a) - order(b))) {
-      lines.push(`  ${problem.level.padEnd(6)} ${describe(problem, show)}`);
+      lines.push(`  ${problem.level.padEnd(6)} ${problem.themes ? `[${problem.themes.join(', ')}] ` : ''}${describe(problem, show)}`);
     }
   }
   // Started for the check, the canvas served the designs folder alone, unless told otherwise
@@ -122,6 +131,11 @@ function describe(problem, show) {
 
 function count(n, what) {
   return `${n} ${what}${n === 1 ? '' : 's'}`;
+}
+
+/** "a", "a and b", "a, b and c" */
+function list(items) {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
 }
 
 const moreBoxes = (n) => `${n} more ${n === 1 ? 'box' : 'boxes'}`;

@@ -308,7 +308,7 @@ async function runCheckCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 Usage:
-  htmlboard check [directory or file] [-p <port>] [-r <root>] [--json]
+  htmlboard check [directory or file] [--theme <name> | --themes all] [-p <port>] [-r <root>] [--json]
 
 Has the canvas running for the designs load each one afresh in a browser and prints what went
 wrong, in a few lines of text: script errors and console.error, files that aren't there, components
@@ -323,6 +323,9 @@ with no canvas running for the designs, the check starts one for itself.
 Exits with 1 when it finds problems, 2 when it can't check.
 
 Options:
+      --theme <name>    Check them in this theme (as the canvas's theme switch shows them)
+      --themes all      Check each in its default and in every theme it has (or --themes light,dark):
+                        a problem found in some of them only says which
   -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
   -r, --root <path>     With no canvas running: serve files from this folder, as htmlboard --root
       --json            The report as JSON
@@ -331,6 +334,8 @@ Options:
   }
   let port;
   let root;
+  let theme;
+  let themes;
   let asJson = false;
   const targets = [];
   for (let i = 0; i < args.length; i++) {
@@ -339,6 +344,10 @@ Options:
     else if (arg.startsWith('--port=')) port = parseInt(arg.slice('--port='.length), 10);
     else if (arg === '--root' || arg === '-r') root = args[++i];
     else if (arg.startsWith('--root=')) root = arg.slice('--root='.length);
+    else if (arg === '--theme') theme = args[++i];
+    else if (arg.startsWith('--theme=')) theme = arg.slice('--theme='.length);
+    else if (arg === '--themes') themes = args[++i];
+    else if (arg.startsWith('--themes=')) themes = arg.slice('--themes='.length);
     else if (arg === '--json') asJson = true;
     else if (arg.startsWith('-')) {
       console.error(`[htmlboard] Unknown option: ${arg} (see htmlboard check --help)`);
@@ -346,7 +355,17 @@ Options:
     } else targets.push(arg);
   }
   try {
-    const { canvas, report } = await runCheck(targets[0], { port, root });
+    if (theme !== undefined && themes !== undefined) {
+      console.error('[htmlboard] --theme or --themes, not both (see htmlboard check --help)');
+      process.exitCode = 2;
+      return;
+    }
+    if ((theme !== undefined && !theme) || (themes !== undefined && !themes)) {
+      console.error(`[htmlboard] ${theme !== undefined ? '--theme needs a theme' : '--themes needs all, or themes'} (see htmlboard check --help)`);
+      process.exitCode = 2;
+      return;
+    }
+    const { canvas, report } = await runCheck(targets[0], { port, root, theme, themes });
     if (asJson) console.log(JSON.stringify(report, null, 2));
     else process.stdout.write(formatReport(report, { name: shownPath(report.dir), url: canvas.url, local: canvas.local }));
     process.exitCode = hasProblems(report) ? 1 : 0;
@@ -360,7 +379,7 @@ async function runShotCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 Usage:
-  htmlboard shot <file> [-s <selector>] [--max <px> | --scale <n>] [-o <file.png>] [-p <port>] [-r <root>]
+  htmlboard shot <file> [-s <selector>] [--max <px> | --scale <n>] [--theme <name>] [-o <file.png>] [-p <port>] [-r <root>]
 
 Saves a PNG of a design, or of one element in it, and prints where, with its size: for an AI agent
 to look at the design. The canvas running for the designs draws it in a browser, from the files as
@@ -378,6 +397,7 @@ Options:
   -s, --selector <css>  Only this element: the first one the selector matches
       --max <px>        The image's longest side at most this many px (e.g. --max 1000)
       --scale <n>       Image px per CSS px (default 1; 2 for a sharper look at a detail)
+      --theme <name>    In this theme (as the canvas's theme switch shows it; default: the page's own)
   -o, --output <file>   Where to save the PNG
   -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
   -r, --root <path>     With no canvas running: serve files from this folder, as htmlboard --root
@@ -387,6 +407,7 @@ Options:
   }
   let port;
   let root;
+  let theme;
   let selector;
   let max;
   let scale;
@@ -404,6 +425,7 @@ Options:
     const take = () => inline ?? value(++i);
     if (flag === '--port' || flag === '-p') port = parseInt(take(), 10);
     else if (flag === '--root' || flag === '-r') root = take();
+    else if (flag === '--theme') theme = take();
     else if (flag === '--selector' || flag === '-s') selector = take();
     else if (flag === '--max') max = Number(take());
     else if (flag === '--scale') scale = Number(take());
@@ -417,12 +439,13 @@ Options:
   if (selector === null || selector === '') return usage('--selector needs a CSS selector');
   if (output === null || output === '') return usage('--output needs a file');
   if (root === null || root === '') return usage('--root needs a folder');
+  if (theme === null || theme === '') return usage('--theme needs a theme');
   if (max !== undefined && !(max > 0)) return usage('--max needs a number of px');
   if (scale !== undefined && !(scale > 0)) return usage('--scale needs a number above 0');
   if (max !== undefined && scale !== undefined) return usage('--max or --scale, not both');
   try {
-    const { canvas, shot } = await runShot(targets[0], { selector, max, scale, port, root });
-    const out = output ? path.resolve(output) : shotPath(canvas.dir, shot.file, { selector });
+    const { canvas, shot } = await runShot(targets[0], { selector, max, scale, port, root, theme });
+    const out = output ? path.resolve(output) : shotPath(canvas.dir, shot.file, { selector, theme });
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, shot.png);
     if (asJson) {

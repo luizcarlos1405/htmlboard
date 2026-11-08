@@ -12,6 +12,8 @@
 // What a design means to do is left alone: text that ends in an ellipsis or is clamped, boxes that
 // scroll, content hidden or moved off the page on purpose.
 
+import { themeFor, showTheme, setTheme, themesOf, inOrder } from './theme.js';
+
 const AT_ONCE = 4; // designs loading at the same time
 const LOAD_MS = 10000; // a page that hasn't loaded by then is checked as it is, and said so
 const QUIET_MS = 300; // a page whose content hasn't changed for this long has settled…
@@ -38,21 +40,25 @@ export function hiddenBox() {
  * A design's page loaded afresh in a frame of its size in `box`, once it has settled: the frame,
  * its window and document (none when there's no page to see), and whether it finished loading in
  * time. With `grow`, a design without a height of its own gets a frame as tall as its page, as the
- * canvas shows it. The caller removes the frame.
+ * canvas shows it. `theme`: the theme to show it in (see theme.js); without one, the page's own, in
+ * the system's light mode (the same whatever the person's computer is set to). The caller removes
+ * the frame.
  *
  * @param {{ file: string, width: number, height?: number, frameHeight: number }} design
  */
-export async function openDesign(design, box, { grow = false } = {}) {
+export async function openDesign(design, box, { grow = false, theme = null } = {}) {
   const frame = document.createElement('iframe');
   frame.name = 'htmlboard-check'; // the probe listens in these frames only
   frame.setAttribute('scrolling', 'no');
   frame.style.cssText = `position: absolute; left: 0; top: 0; border: 0; width: ${design.width}px; height: ${design.frameHeight}px;`;
+  showTheme(frame, theme, { own: 'light' });
   const loaded = new Promise((resolve) => frame.addEventListener('load', () => resolve(true), { once: true }));
   frame.src = encodeURI(`/${design.file}`);
   box.append(frame);
   const finished = await Promise.race([loaded, wait(LOAD_MS).then(() => false)]);
   const doc = frame.contentDocument;
   if (!doc?.body) return { frame, finished, win: null, doc: null };
+  if (theme) setTheme(doc.documentElement, theme); // again, in case the page's scripts set their own
   if (finished) await settle(doc);
   if (grow && !design.height) {
     // Measured once: a page always a bit taller than its frame would grow forever
@@ -66,18 +72,23 @@ export async function openDesign(design, box, { grow = false } = {}) {
 }
 
 /**
- * Check designs, each `{ file, title, width, height, frameHeight, grow }` (height: the design's own,
- * 0 when it grows with its page; frameHeight: its frame's; grow: to its page's height, when the
- * canvas hasn't measured it), and say what went wrong in each.
+ * Check designs, each `{ file, title, width, height, frameHeight, grow, themes }` (height: the
+ * design's own, 0 when it grows with its page; frameHeight: its frame's; grow: to its page's height,
+ * when the canvas hasn't measured it; themes: how its themes apply, when it says), and say what went
+ * wrong in each.
+ *
+ * In a theme (`theme`), or in several (`themes`: 'all', its default and every theme it has, or a
+ * list): a problem found in some of them only says which (`themes` on it), and each design says the
+ * themes it was checked in.
  */
-export async function checkDesigns(designs) {
+export async function checkDesigns(designs, { theme = null, themes = null } = {}) {
   const box = hiddenBox();
   const results = [];
   let next = 0;
   const worker = async () => {
     while (next < designs.length) {
       const index = next++;
-      results[index] = await checkDesign(designs[index], box);
+      results[index] = await checkInThemes(designs[index], box, { theme, themes });
     }
   };
   try {
@@ -86,22 +97,64 @@ export async function checkDesigns(designs) {
     box.remove();
   }
   await findMissing(results);
-  return results.map(({ resources, ...result }) => result);
+  return results.map(({ resources, found, ...result }) => result);
 }
 
-async function checkDesign(design, box) {
+// A design in a theme, or in each of several, its problems in them merged
+async function checkInThemes(design, box, { theme, themes }) {
+  const config = design.themes;
+  if (!themes) {
+    const result = await checkDesign(design, box, { theme: themeFor(config, theme) });
+    return theme ? { ...result, themes: [theme] } : result;
+  }
+  const runs = [];
+  let values = themes;
+  if (themes === 'all') {
+    // Its default first, where the themes its stylesheets have are found when it doesn't say
+    const first = await checkDesign(design, box, { find: config?.values?.length ? null : config?.attribute || 'data-theme' });
+    runs.push(['default', first]);
+    values = config?.values?.length ? config.values : first.found;
+  }
+  for (const value of inOrder(values || [])) runs.push([value, await checkDesign(design, box, { theme: themeFor(config, value) })]);
+  if (runs.length === 1) return runs[0][1]; // no themes: as without --themes
+  return merge(runs);
+}
+
+// Runs of one design in several themes as one result: a problem found in all of them once, the others
+// with the themes they were found in
+function merge(runs) {
+  const result = { ...runs[0][1], problems: [], resources: new Map(), themes: runs.map(([label]) => label) };
+  delete result.found;
+  const seen = new Map(); // problem as JSON → { problem, labels }
+  for (const [label, run] of runs) {
+    for (const [file, code] of run.resources) if (code || !result.resources.has(file)) result.resources.set(file, code);
+    for (const problem of run.problems) {
+      const key = JSON.stringify(problem);
+      if (!seen.has(key)) seen.set(key, { problem, labels: [] });
+      seen.get(key).labels.push(label);
+    }
+  }
+  for (const { problem, labels } of seen.values()) {
+    result.problems.push(labels.length === runs.length ? problem : { ...problem, themes: labels });
+  }
+  return result;
+}
+
+// find: the attribute to find the page's themes for (in `found`)
+async function checkDesign(design, box, { theme = null, find = null } = {}) {
   const result = {
     file: design.file, title: design.title, width: design.width, height: design.height || null,
     problems: [], resources: new Map(),
   };
   let frame;
   try {
-    const page = await openDesign(design, box, { grow: design.grow });
+    const page = await openDesign(design, box, { grow: design.grow, theme });
     frame = page.frame;
     if (!page.doc) {
       result.problems.push({ level: 'error', kind: 'blank' });
       return result;
     }
+    if (find) result.found = themesOf(page.doc, find);
     if (!page.finished) result.problems.push({ level: 'error', kind: 'timeout', seconds: LOAD_MS / 1000 });
     inspect(page.win, page.doc, design, result);
   } catch (error) {

@@ -42,6 +42,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 🔎 **Search**: Find designs by name, file, tags or section (case and accents don't matter); the others fade out in place.
 - 👁️ **Sections You Can Fold and Hide**: Fold a section in the list, or hide it from the canvas: its designs unload, so a canvas of hundreds of designs stays light. <kbd>Alt</kbd> + click its eye to see only that one; the list remembers what you folded and hid.
 - 🖼️ **Light When Zoomed Out**: Below 25%, each design shows as a picture of its page, made in the background, and the page under it isn't drawn: hundreds of designs pan and zoom smoothly, and their animations don't keep your computer busy. Zoom in and they're live again.
+- 🌗 **Themes Without Variants**: One switch in the toolbar (<kbd>T</kbd>) shows every design in a theme the project has, found in its stylesheets (`[data-theme="dark"]` rules, or the system's light and dark) or named in `designs.json`. `htmlboard check --themes all` checks each design in each theme, and `htmlboard shot --theme dark` looks at one.
 - 📸 **Copy or Save as an Image**: Hover a design for two buttons: copy it to the clipboard as a PNG of its full size (twice that on a Retina screen), or save it in a folder you choose once. <kbd>C</kbd> and <kbd>S</kbd> do the same for the selected design.
 - 🎯 **Focus & Zoom-to-Fit**: Click a design in the list or double-click it on the canvas to fit it, <kbd>Shift</kbd> + <kbd>1</kbd> fits everything, <kbd>←</kbd> <kbd>→</kbd> step through the designs.
 - 🔗 **Deep Links**: The URL follows the selected design (`http://localhost:3000/#checkout-b`), so you can share or reload a view of one design.
@@ -241,8 +242,9 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
 - **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (colors, spacing, alignment).
 - **It runs in a browser**: the one the canvas is open in, or with none open (a background session, nobody at the computer), one the canvas opens out of sight: Chrome, Chromium or Edge, else Firefox, headless. `HTMLBOARD_BROWSER=<path>` names another, `HTMLBOARD_BROWSER=none` turns this off. It quits after a minute without checks or shots, and when the canvas stops. Nothing is downloaded: the browser only opens the canvas's page, which does the work.
 - **With no canvas running** for the designs (CI, a fresh worktree), the check starts one for itself, out of sight, and stops it when it's done. That one serves the designs folder (the nearest folder above the file with a `designs.json`, `styles.css`, `components.js` or `components/`), so if the designs link files outside it, add `--root <folder>` as you would to the canvas; the report says so when files are missing.
-- Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
+- Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start, and to set the theme they're shown in before their own scripts run; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
 - A file or a folder checks just those designs: `htmlboard check designs/01-screens/02-customers.html`. It finds the canvas on ports 3000 to 3020 (`-p` for another) and exits with 1 when there are problems, 2 when it can't check. `--json` gives the report as data.
+- **In themes:** `--theme dark` checks the designs in that theme; `--themes all` checks each one in its default and in every theme it has (`--themes light,dark`: in those), and a problem found in some of them only says which: `layout [dark] text spills out of .btn: "Confirm"`. Without either, a design is checked in its own theme, in the system's light mode, so the check sees the same on any computer.
 
 ### Looking at a design: `htmlboard shot`
 
@@ -255,7 +257,8 @@ $ npx htmlboard shot designs/01-screens/02-customers.html -s table
 
 - **Drawn by the canvas**, like the check, and in the same browser (yours, or one out of sight; with no canvas running, the shot starts one): the design loads afresh, out of sight, in a frame of its size (as tall as its page when it has no height of its own), and the browser draws it as Copy image does, from the files as they are on disk.
 - **A part costs less:** an agent pays for an image by its area, roughly width × height / 750 tokens for Claude, so a 1440 × 900 screen is about 1.7k tokens. `-s <selector>` shoots the first element the CSS selector matches, which is cheaper and sharper; `--max 1000` makes the longest side at most 1000 px for an overview; `--scale 2` doubles the pixels for a close look at a detail.
-- **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design and the selector, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
+- **In a theme:** `--theme dark` shows the design in that theme, as the canvas's theme switch does (see [Themes](#-how-designs-are-found)).
+- **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design, the selector and the theme, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
 - It exits with 1 when it can't take the shot as asked (no element matches the selector, or the file isn't a design on the canvas) and 2 when it can't reach the canvas. What an image can't show, a shot can't either: other sites' images that don't allow it, pages inside the page, shadow DOM.
 
 ---
@@ -274,8 +277,9 @@ Every `.html` file under the folder is a design (hidden folders, `node_modules`,
 <meta name="description" content="One page, address first">    <!-- its description -->
 <meta name="htmlboard" content="width=390, height=844">         <!-- its size (and category=…) -->
 <meta name="htmlboard:label" content="light">                   <!-- added to its name: "Checkout · light" -->
-<meta name="htmlboard:variant" content="?theme=dark · dark">    <!-- one more frame: "Checkout · dark" -->
+<meta name="htmlboard:variant" content="?state=empty · empty">  <!-- one more frame: "Checkout · empty" -->
 <meta name="htmlboard:variant" content="width=768, height=1024 · tablet">  <!-- and at a tablet's size -->
+<meta name="htmlboard:themes" content="class: light, dark">      <!-- its themes, when not data-theme -->
 ```
 
 | Tag | What it says |
@@ -284,13 +288,16 @@ Every `.html` file under the folder is a design (hidden folders, `node_modules`,
 | `<meta name="description">` | Its description, shown in the list and found by the search. |
 | `<meta name="htmlboard" content="…">` | `width=…`, `height=…`, `category=…` (`mobile`, `tablet`, `desktop`, `components` or your own word), or `skip` to leave the file out (partials, templates). |
 | `<meta name="htmlboard:label">` | Text added to the name of the file's own frame, when it has variants. |
-| `<meta name="htmlboard:variant">` | One more frame of the same file: with a query string (`?theme=dark`), at another size (`width=390, height=844`, so a responsive page shows on a phone too), or both; then its label. As many as you like; they follow the file. |
+| `<meta name="htmlboard:variant">` | One more frame of the same file: with a query string (`?state=empty`), at another size (`width=390, height=844`, so a responsive page shows on a phone too), or both; then its label. As many as you like; they follow the file. |
+| `<meta name="htmlboard:themes">` | How its themes apply, when it isn't the `data-theme` attribute on `<html>`: the attribute, then the themes (`data-mode: day, night`; `class: light, dark` for classes on `<html>`). Without it, the canvas finds them (see **Themes** below). |
 
 **Sizes.** The width is the frame's viewport: the page's CSS needs it before it renders. Give the height for designs of a fixed size (a phone screen, a flyer: the frame is that tall and cuts the rest); leave it out and the frame grows with the page. Without a size, words in the path decide (`mobile` → 390 × 844, `tablet` → 768 × 1024, `desktop` → 1280 × 800, `component` → 720 × 600), else 1200 wide.
 
 **Categories** drive the filters. Left out, they come from words in the path, then from the size when it is a screen's (a phone's width, a tablet's 3:4, a desktop's landscape); flyers, boards and other formats get none and show under **All**.
 
 **Shared styles.** Designs link one stylesheet for what they share (tokens, base styles, classes like `.btn` and `.card`) and keep only their own CSS in their `<style>`, so they stay consistent and each new design is shorter to write. The samples use a `styles.css` at the top of the folder (`<link rel="stylesheet" href="../styles.css">`), and the agent skill tells LLMs to look it up (`htmlboard catalog`), use it and grow it. Editing it reloads every design that links it.
+
+**Themes.** The theme button in the toolbar (<kbd>T</kbd>, <kbd>Shift</kbd> + <kbd>T</kbd> back) shows every design in one of the project's themes, with no variants or scripts. It sets the theme on each page's `<html>` (`data-theme="dark"`), and for light and dark also its frame's `color-scheme`, which pages that follow the system's mode (`prefers-color-scheme`, `light-dark()`) see. A page that loads in a theme starts in it, so its scripts see it too; back to each page's own, the pages load again. The canvas finds the themes in the stylesheets (`[data-theme="…"]` rules, and light and dark for pages that follow the system); a project that switches another attribute, or classes on `<html>`, names them in `designs.json` (`"themes"`) or in a design's `<meta name="htmlboard:themes">`. The pictures shown zoomed out follow the switch, and checks and shots take a theme: `htmlboard check --themes all`, `htmlboard shot --theme dark`. Firefox and current Chrome show the system's light or dark in a frame as its `color-scheme` says; in a browser that doesn't (an older Chromium, as in some desktop apps), designs that follow the system stay in its mode, while attribute themes switch in any browser.
 
 ---
 
@@ -365,6 +372,7 @@ A `designs.json` in the folder curates the canvas when folders aren't enough: se
 - A file's variants follow it unless designs.json lists them. `"folder"` brings a whole folder (in prefix order).
 - **Designs it doesn't list still show**, after the ones it does: in the section that holds their folder, else in their folder's own section (the files at the top in "Unlisted"). `"unlisted": "hide"` shows only what it lists.
 - **Components show on the canvas with `"components": "show"`**, each alone in its frame, from the example its file starts with, in a "components" section after the designs. They are 480 wide, unless the component's file says `<meta name="htmlboard" content="width=1040">`. A section can also list them (`"components/tx-item.html"`) or bring them all (`"folder": "components"`). A `designs.json` that only says `{ "components": "show" }` leaves the rest of the canvas as the files make it.
+- `"themes"` says how the designs' themes apply, when it isn't the `data-theme` attribute on `<html>`, or which they are: `{ "attribute": "class", "values": ["light", "dark"] }` (classes on `<html>`), or just `["light", "dark"]`. The theme switch, `htmlboard check --themes all` and `htmlboard shot --theme` use them; without it, the canvas finds them in the stylesheets. An entry can say its own (`{ "file": "…", "themes": … }`).
 - `name` and `artboards` are synonyms of `title` and `designs`.
 
 ### Moving an existing `designs.json` into the files
@@ -392,6 +400,7 @@ It writes each file's size, category, label, variants and description as tags af
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next design |
 | <kbd>Enter</kbd> | Open the selected design on its own |
 | <kbd>C</kbd> / <kbd>S</kbd> | Copy / save the selected design as an image (<kbd>Shift</kbd> + <kbd>S</kbd>: choose the folder) |
+| <kbd>T</kbd> | Every design in the next theme, then each page's own again (<kbd>Shift</kbd> + <kbd>T</kbd>: the one before) |
 | <kbd>/</kbd> | Search (<kbd>Enter</kbd> fits the first match, <kbd>Esc</kbd> clears) |
 | <kbd>1</kbd> – <kbd>4</kbd> | Show all, mobile, tablet, desktop (<kbd>5</kbd> on: the other categories) |
 | <kbd>R</kbd> | Reload the designs |
@@ -471,6 +480,7 @@ And the check (the server answers it at `GET /api/check`, `?only=<file or folder
 import { runCheck, formatReport } from 'htmlboard';
 
 const { canvas, report } = await runCheck('./designs'); // { port } when it isn't on 3000 to 3020; with none running, one is started
+// { theme: 'dark' } checks them in a theme; { themes: 'all' } each in its default and every theme it has
 // → report: { dir, root, designs: [{ file, title, width, height, problems: [{ level: 'error', kind: 'missing', path: '/img/logo.png', tag: 'img' }, …] }, …] }
 console.log(formatReport(report, { url: canvas.url }));
 ```
@@ -481,7 +491,7 @@ And a shot (the server answers it at `GET /api/shot?file=<design>&selector=<css>
 import fs from 'node:fs';
 import { runShot, shotPath } from 'htmlboard';
 
-const { canvas, shot } = await runShot('./designs/home.html', { selector: '.hero', max: 1000 });
+const { canvas, shot } = await runShot('./designs/home.html', { selector: '.hero', max: 1000 }); // { theme: 'dark' } too
 // → shot: { file: 'home.html', title: 'Home', width: 1000, height: 412, matches: 1, png: <Buffer> }
 fs.writeFileSync(shotPath(canvas.dir, shot.file, { selector: '.hero' }), shot.png);
 ```
@@ -512,8 +522,9 @@ htmlboard/
 │   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
 │   │   ├── check.js      # Checks the designs in frames out of sight, for `htmlboard check`
 │   │   ├── shot.js       # A design, or one element, as a PNG, for `htmlboard shot`
+│   │   ├── theme.js      # Themes: how a page is shown in one, and which ones its stylesheets have
 │   │   ├── picture.js    # A design as an image, drawn by the browser (copy, save, zoomed out, shots)
-│   │   ├── probe.js      # Notes script errors and failed loads in the frames the check loads
+│   │   ├── probe.js      # First in framed pages: sets their theme, notes errors for the check
 │   │   ├── favicon.svg, logo.svg, mark.svg
 │   │   └── fonts/        # Inter and Bricolage Grotesque (OFL)
 │   └── templates/        # The sample designs `--init` adds

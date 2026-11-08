@@ -13,6 +13,7 @@ import { COMPONENTS_FOLDER, PREVIEW_WIDTH, isPage, isTagName } from './component
 //   <meta name="htmlboard" content="width=390, height=844, category=mobile">   ("skip" leaves it out)
 //   <meta name="htmlboard:label" content="claro">            added to the name of the file's own frame
 //   <meta name="htmlboard:variant" content="?tema=escuro · escuro">   one more frame of the same file
+//   <meta name="htmlboard:themes" content="data-mode: light, dark">  how its themes apply (see parseThemes)
 //
 // A designs.json beside them is optional and only curates: sections with their titles, the order,
 // overrides for a design's values. Designs it doesn't list come after the ones it does (unless it
@@ -146,6 +147,31 @@ function parseVariant(content) {
   return { query, label: tokens.slice(i).join(' ').replace(LABEL_START, '').trim(), ...compact({ width, height, category }) };
 }
 
+/**
+ * How a design's themes apply, as <meta name="htmlboard:themes"> says it: the attribute on <html> that
+ * holds the theme, then the themes ("data-mode: light, dark"; "class: light, dark" for classes on
+ * <html>). Without an attribute it's data-theme ("light, dark"); without themes ("data-mode:"), the
+ * canvas finds them in the stylesheets.
+ */
+export function parseThemes(content) {
+  const named = String(content).match(/^\s*([\w-]+)\s*:(.*)$/s);
+  const values = (named ? named[2] : String(content)).split(/[\s,]+/).filter(Boolean);
+  if (!named && !values.length) return null;
+  return { attribute: named ? named[1].toLowerCase() : 'data-theme', values };
+}
+
+/**
+ * designs.json's "themes": `{ "attribute": "class", "values": ["light", "dark"] }`, or just the themes
+ * (`["light", "dark"]`, for data-theme). Undefined when it says nothing usable.
+ */
+export function normalizeThemes(themes) {
+  if (Array.isArray(themes)) themes = { values: themes };
+  if (!themes || typeof themes !== 'object') return undefined;
+  const attribute = String(themes.attribute ?? 'data-theme').trim().toLowerCase() || 'data-theme';
+  const values = (Array.isArray(themes.values) ? themes.values : []).map((value) => String(value).trim()).filter(Boolean);
+  return { attribute, values };
+}
+
 /** A variant as its tag's content says it: "?theme=dark width=390, height=844 · dark mobile" */
 export function formatVariant({ query = '', label = '', width, height, category }) {
   const size = [width && `width=${width}`, height && `height=${height}`, category && `category=${category}`].filter(Boolean).join(', ');
@@ -170,6 +196,7 @@ export function parseDesignMeta(html) {
     if (name === 'description') meta.description = content;
     else if (name === 'htmlboard') Object.assign(meta, parseSettings(content));
     else if (name === 'htmlboard:label') meta.label = content;
+    else if (name === 'htmlboard:themes') meta.themes = parseThemes(content) ?? undefined;
     else if (name === 'htmlboard:variant') {
       const variant = parseVariant(content);
       if (variant) meta.variants.push(variant);
@@ -216,7 +243,8 @@ function fileDesign(file, folder, meta) {
     description: meta.description,
     width,
     height,
-    category: meta.category
+    category: meta.category,
+    themes: meta.themes
   });
 }
 
@@ -326,7 +354,7 @@ function groupByFolder(designs, rootName = '') {
 
 // ---------------------------------------------------------------- designs.json
 
-const OVERRIDES = ['title', 'description', 'width', 'height', 'category', 'tags', 'id'];
+const OVERRIDES = ['title', 'description', 'width', 'height', 'category', 'tags', 'id', 'themes'];
 
 function toEntry(entry) {
   if (typeof entry === 'string') return entry ? { file: entry } : null;
@@ -408,8 +436,8 @@ function curate(config, designs, components = []) {
   // row without a title, as without designs.json.
   sections.push(...groupByFolder(rest, sources.length ? 'Unlisted' : ''));
 
-  const { sections: _sections, ...top } = config;
-  return { ...top, sections };
+  const { sections: _sections, themes, ...top } = config;
+  return { ...top, ...compact({ themes: normalizeThemes(themes) }), sections };
 }
 
 /** Ids, paths from the served root, categories; and nothing the explorer doesn't need */
@@ -431,6 +459,7 @@ function finalize(manifest, prefix = '') {
       artboards: artboards.map((design) => {
         const { key, folder: _folder, baseTitle, variantOf, component, ...board } = design;
         const category = board.category ?? inferCategory(design.file.split('?')[0], board.width, board.height);
+        if (board.themes !== undefined) board.themes = normalizeThemes(board.themes); // a designs.json entry's own
         return compact({
           ...board,
           id: uniqueId(board.id ?? designId(design.file)),

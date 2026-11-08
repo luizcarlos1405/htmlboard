@@ -54,7 +54,7 @@ One design per file, with its facts in the `<head>`, linking the shared styleshe
 
 More tags, all optional:
 
-- `<meta name="htmlboard:variant" content="?theme=dark · dark">` shows the same file again with that query string, named "<title> · dark": for states the page builds from its URL (themes, empty or error states, data). A variant can also change the size: `content="width=390, height=844 · mobile"` shows a responsive page at a phone's size too, from the same file (`?theme=dark width=390 · dark mobile` does both). One tag per variant; they follow the file.
+- `<meta name="htmlboard:variant" content="?state=empty · empty">` shows the same file again with that query string, named "<title> · empty": for states the page builds from its URL (empty or error states, data; themes need none, see Shared styles). A variant can also change the size: `content="width=390, height=844 · mobile"` shows a responsive page at a phone's size too, from the same file (`?state=empty width=390 · empty mobile` does both). One tag per variant; they follow the file.
 - `<meta name="htmlboard:label" content="light">` adds a label to the name of the file's own frame ("Checkout · light"), to tell it from its variants.
 - `category=…` in the `htmlboard` tag sets the explorer's filter (`mobile`, `components`, your own word) when the path and size don't say it.
 - `<meta name="htmlboard" content="skip">` leaves a file out (partials, templates, a page that isn't a design).
@@ -68,6 +68,7 @@ Put what the designs share in one stylesheet instead of repeating it in every fi
 - Link it with a relative path: `styles.css` from the top of the folder, `../styles.css` from a section folder.
 - A design's own `<style>` holds only what is specific to it. When a second design needs the same thing, move it to `styles.css`. Split it when it grows (`forms.css`, `charts.css`) and link the extra files where they are used.
 - Editing `styles.css` restyles every design that links it, which is the point for a product's screens. For one-off explorations that should keep their look (a different style, logo options), style them in their own file instead.
+- Themes need no variants: the canvas's theme switch shows every design in a theme its stylesheets have, `[data-theme="dark"]` rules (the attribute on `<html>`) or the system's light and dark (`prefers-color-scheme`, `light-dark()`). For another attribute, or classes on `<html>`, say so in designs.json (htmlboard-designs-json skill).
 
 ## Components
 
@@ -92,4 +93,5 @@ Saving a design reloads its frame, saving a file designs use (a stylesheet, a co
 - Put variants in separate files next to each other (`01-hero-a.html`, `02-hero-b.html`) instead of overwriting the current design, so they can be compared on the canvas. Keep the current one as the reference until the user picks.
 - Say which files you created or changed and what to look at; the user is watching the canvas, not the code. Link straight to a design with its file after the `#`: `http://localhost:3000/#03-checkout/02-steps.html`.
 - Before reporting back, run `npx htmlboard check <designs folder>` (or a design's file): the canvas loads each design again, in the user's browser or in one out of sight, and lists what went wrong (script errors, missing files and components, fonts that didn't load, content cut at the frame's edge, text cut off or spilling out). Fix it and run it again. A note about content below a fixed-height frame is fine for a screen that scrolls, not for a flyer. It works with no canvas running too; if it says there's no browser to run it in, ask the user to open the canvas's URL.
+- When the catalog lists themes, check every design in each: `check --themes all` (a problem found in some themes only says which), and look at one with `shot --theme dark`.
 - The check can't judge looks (colors, spacing, alignment): look at the design with `npx htmlboard shot <file>`, which saves it as a PNG and prints where. An image costs you by its area: `--max 1000` makes a smaller one of the whole screen, `-s <selector>` shows one part (`-s .table`), sharper and cheaper.

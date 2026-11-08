@@ -13,7 +13,9 @@ const LOAD_MS = 10000;
 const TRANSPARENT = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const URL_RE = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
 const IMPORT_RULE = 3;
+const MEDIA_RULE = 4;
 const FONT_FACE_RULE = 5;
+const PREFERS_SCHEME = /prefers-color-scheme/i;
 const LEFT_OUT = new Set(['script', 'noscript', 'style', 'link', 'source', 'track']);
 
 // What pictures of several designs share, read once for all of them: the files (fonts, images) as
@@ -49,7 +51,12 @@ async function drawPage(iframe, { width, height, scale, cache }) {
   const win = iframe.contentWindow;
   await doc.fonts?.ready;
   const files = reader(win, cache);
+  // A frame shown in light or dark (its color-scheme set: a theme) prefers that mode, where the image
+  // drawn from it would prefer the system's: the page's rules for prefers-color-scheme are decided by
+  // the frame, and its <html> keeps the mode it has there (light-dark(), the browser's own colours).
+  if (iframe.style.colorScheme) files.frame = win;
   const [css, root] = await Promise.all([styles(doc, files), copyPage(doc, files)]);
+  if (files.frame) root.style.colorScheme = usedScheme(doc, win);
   const style = doc.createElement('style');
   style.textContent = css;
   (root.querySelector('head') || root).append(style);
@@ -227,13 +234,27 @@ async function styles(doc, files) {
   return parts.join('\n');
 }
 
+/** The mode a page is in: light or dark, from its color-scheme and the one its frame prefers */
+function usedScheme(doc, win) {
+  const own = (win.getComputedStyle(doc.documentElement).colorScheme || 'normal').split(/\s+/);
+  if (own.includes('light') && own.includes('dark')) return win.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return own.includes('dark') ? 'dark' : 'light';
+}
+
+/** Whether rules for `media` apply, when the frame decides (prefers-color-scheme, see drawPage); else null */
+function decided(media, files) {
+  return files.frame && PREFERS_SCHEME.test(media) ? files.frame.matchMedia(media).matches : null;
+}
+
 // `fonts` collects the files of the font faces read, to tell which of them a page used.
 async function sheetCss(sheet, base, files, fonts, media = sheet.media?.mediaText) {
+  if (media && decided(media, files) === false) return '';
   let css;
   if (sheet.href) {
     // A linked stylesheet, often the same in every design: read once for each set of its fonts used
+    // (and in each mode, when the frame decides the rules for it)
     const saved = files.sheets.get(sheet.href);
-    const key = saved && fontsKey(saved.fonts, files.used);
+    const key = saved && sheetKey(saved.fonts, files);
     if (saved?.css.has(key)) {
       css = saved.css.get(key);
       fonts.push(...saved.fonts);
@@ -242,13 +263,13 @@ async function sheetCss(sheet, base, files, fonts, media = sheet.media?.mediaTex
       css = await readSheet(sheet, sheet.href, files, own);
       fonts.push(...own);
       const entry = saved || { fonts: own, css: new Map() };
-      entry.css.set(fontsKey(entry.fonts, files.used), css);
+      entry.css.set(sheetKey(entry.fonts, files), css);
       files.sheets.set(sheet.href, entry);
     }
   } else {
     css = await readSheet(sheet, base, files, fonts);
   }
-  return media && media !== 'all' ? `@media ${media} {\n${css}\n}` : css;
+  return media && media !== 'all' && decided(media, files) === null ? `@media ${media} {\n${css}\n}` : css;
 }
 
 async function readSheet(sheet, base, files, fonts) {
@@ -274,6 +295,8 @@ async function rulesCss(rules, base, files, fonts) {
       const urls = fontFiles(rule, base);
       fonts.push(...urls);
       if (!unusedFont(urls, files.used)) parts.push(rule.cssText);
+    } else if (rule.type === MEDIA_RULE && decided(rule.media.mediaText, files) !== null) {
+      if (decided(rule.media.mediaText, files)) parts.push(await rulesCss(rule.cssRules, base, files, fonts));
     } else {
       parts.push(rule.cssText);
     }
@@ -295,6 +318,12 @@ function unusedFont(urls, used) {
 // Which of a stylesheet's fonts a page loaded: pages that loaded the same ones get the same CSS
 function fontsKey(fonts, used) {
   return used ? fonts.filter((url) => used.has(url)).join(' ') : '*';
+}
+
+// The fonts it loaded, and the mode its frame decides the stylesheet's rules for, if it does
+function sheetKey(fonts, files) {
+  const mode = files.frame ? (files.frame.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : '';
+  return `${mode}|${fontsKey(fonts, files.used)}`;
 }
 
 // ---------------------------------------------------------------- the page's HTML

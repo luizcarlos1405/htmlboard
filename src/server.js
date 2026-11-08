@@ -373,18 +373,33 @@ export function createServer(options = {}) {
     return running ? running.close() : Promise.resolve();
   }
 
-  /** The designs on the canvas, as the canvas needs them to load one afresh */
+  /**
+   * The designs on the canvas, as the canvas needs them to load one afresh: with how their themes
+   * apply when they or designs.json say (themes: { attribute, values })
+   */
   function canvasDesigns() {
-    return loadDesignsManifest(targetDir, rootDir).sections
+    const manifest = loadDesignsManifest(targetDir, rootDir);
+    return manifest.sections
       .flatMap((section) => section.artboards)
-      .map(({ id, file, title, width, height, fit }) => ({ id, file, title, width, height, fit }));
+      .map(({ id, file, title, width, height, fit, themes }) => ({ id, file, title, width, height, fit, themes: themes ?? manifest.themes }));
+  }
+
+  /** --theme and --themes, as the canvas takes them: a theme, or the themes to check each design in ('all', or a list) */
+  function themesAsked(params) {
+    const theme = params.get('theme')?.trim() || undefined;
+    const themes = params.get('themes')?.trim();
+    return {
+      theme,
+      themes: !themes ? undefined : themes === 'all' ? 'all' : themes.split(/[\s,]+/).filter(Boolean)
+    };
   }
 
   /** A design's file from the designs folder ("01-shop/cart.html", with its query if it has one) */
   const ownFile = (file) => (designsPath ? file.slice(designsPath.length + 1) : file);
 
-  // only: files or folders (from the designs folder) to check; all the designs when there's none
-  function startCheck(res, only) {
+  // only: files or folders (from the designs folder) to check; all the designs when there's none.
+  // theme, themes: the theme to check them in, or the themes to check each in (see themesAsked).
+  function startCheck(res, only, { theme, themes } = {}) {
     const wanted = only.map((item) => item.replace(/\\/g, '/').replace(/^\.?\/+|\/+$/g, ''));
     const designs = canvasDesigns().filter(({ file }) => {
       const own = ownFile(file).split('?')[0];
@@ -394,7 +409,7 @@ export function createServer(options = {}) {
       json(res, 404, { error: wanted.some(Boolean) ? `No design on the canvas is in ${only.join(', ')}` : 'There are no designs to check' });
       return;
     }
-    askCanvas(res, 'check', { designs }, (report) => (report.error
+    askCanvas(res, 'check', { designs, theme, themes }, (report) => (report.error
       ? { status: 500, body: { error: `The canvas couldn't check the designs: ${report.error}` } }
       : { status: 200, body: { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] } }));
   }
@@ -415,11 +430,11 @@ export function createServer(options = {}) {
       return Number.isFinite(value) && value > 0 ? value : undefined;
     };
     const own = ownFile(design.file);
-    askCanvas(res, 'shot', { design, selector: params.get('selector') || undefined, max: positive('max'), scale: positive('scale') },
+    askCanvas(res, 'shot', { design, selector: params.get('selector') || undefined, max: positive('max'), scale: positive('scale'), theme: themesAsked(params).theme },
       (shot) => {
         if (shot.error && shot.kind === 'request') return { status: 422, body: { error: shot.error } };
         if (shot.error || !shot.png) return { status: 500, body: { error: `The canvas couldn't shoot ${own}: ${shot.error || 'no image'}` } };
-        return { status: 200, body: { file: own, title: design.title, width: shot.width, height: shot.height, matches: shot.matches, png: shot.png } };
+        return { status: 200, body: { file: own, title: design.title, width: shot.width, height: shot.height, matches: shot.matches, ...(shot.theme ? { theme: shot.theme } : {}), png: shot.png } };
       });
   }
 
@@ -429,7 +444,7 @@ export function createServer(options = {}) {
 
     // API: checking the designs (htmlboard check), which the canvas does
     if (pathname === '/api/check' && req.method === 'GET') {
-      startCheck(res, parsedUrl.searchParams.getAll('only'));
+      startCheck(res, parsedUrl.searchParams.getAll('only'), themesAsked(parsedUrl.searchParams));
       return;
     }
     // API: a design, or an element of it, as a PNG (htmlboard shot), which the canvas draws
