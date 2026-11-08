@@ -1326,7 +1326,7 @@ function connect() {
   });
   source.addEventListener('check', (event) => {
     try {
-      takeCheck(JSON.parse(event.data));
+      take(JSON.parse(event.data), runCheck);
     } catch {
       // Not ours.
     }
@@ -1338,19 +1338,29 @@ function connect() {
   });
 }
 
-// ---------------------------------------------------------------- checking (htmlboard check)
+// ---------------------------------------------------------------- requests from the server (htmlboard check)
 
-let checking = Promise.resolve();
+let working = Promise.resolve();
 
-// The server asks every open canvas: the first to claim a check does it, after the ones it's doing.
-async function takeCheck(request) {
+// The server asks every open canvas: the first to claim a request does it, after the ones it's doing.
+async function take(request, run) {
   let claimed = false;
   try {
-    claimed = (await fetch(`/api/check/${request.id}/claim`, { method: 'POST' })).ok;
+    claimed = (await fetch(`/api/requests/${request.id}/claim`, { method: 'POST' })).ok;
   } catch {
     // The server is gone
   }
-  if (claimed) checking = checking.then(() => runCheck(request));
+  if (claimed) working = working.then(() => run(request));
+}
+
+/** Answers a request: whether the server got the answer */
+async function answer(id, reply) {
+  try {
+    await fetch(`/api/requests/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reply) });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function runCheck({ id, designs: boards }) {
@@ -1374,11 +1384,7 @@ async function runCheck({ id, designs: boards }) {
   } catch (err) {
     report = { error: String(err?.message || err) };
   }
-  try {
-    await fetch(`/api/check/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(report) });
-  } catch {
-    return;
-  }
+  if (!await answer(id, report)) return;
   const failing = (report.designs || []).filter((d) => d.problems.some((p) => p.level !== 'note')).length;
   const verdict = !failing ? 'no problems' : designs.length === 1 ? 'problems found' : `${failing} with problems`;
   toast(report.error ? `Couldn't check ${what}: ${report.error}` : `Checked ${what}: ${verdict}`);

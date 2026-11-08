@@ -23,9 +23,10 @@ function cli(args, cwd) {
 /**
  * A stand-in for the canvas open in a browser: it listens to the events and answers each check with
  * answer(designs) (a report's designs), as the explorer would. Resolves once connected, to a function
- * that disconnects it; `checks` gets each check it was sent.
+ * that disconnects it; `checks` gets each check it was sent. `route`: where it claims and answers
+ * (a canvas from before shots used /api/check/…).
  */
-function fakeCanvas(url, answer, checks = []) {
+function fakeCanvas(url, answer, checks = [], { route = 'requests' } = {}) {
   return new Promise((resolve) => {
     const req = http.get(`${url}/api/events`, (res) => {
       let buffer = '';
@@ -39,9 +40,9 @@ function fakeCanvas(url, answer, checks = []) {
           if (event !== 'check') continue;
           const request = JSON.parse(block.match(/^data: (.*)$/m)[1]);
           checks.push(request);
-          const claim = await fetch(`${url}/api/check/${request.id}/claim`, { method: 'POST' });
+          const claim = await fetch(`${url}/api/${route}/${request.id}/claim`, { method: 'POST' });
           if (!claim.ok) continue;
-          await fetch(`${url}/api/check/${request.id}`, { method: 'POST', body: JSON.stringify(answer(request.designs)) });
+          await fetch(`${url}/api/${route}/${request.id}`, { method: 'POST', body: JSON.stringify(answer(request.designs)) });
         }
       });
     });
@@ -126,6 +127,19 @@ describe('htmlboard check', () => {
     } finally {
       disconnect();
       late();
+    }
+  });
+
+  test('a canvas from before shots claims and answers at /api/check/…', async () => {
+    const disconnect = await fakeCanvas(server.url, (designs) => ({
+      designs: designs.map(({ file, title }) => ({ file, title, problems: [] }))
+    }), [], { route: 'check' });
+    try {
+      const res = await fetch(`${server.url}/api/check?only=home.html`);
+      assert.equal(res.status, 200);
+      assert.deepEqual((await res.json()).designs.map((design) => design.file), ['home.html']);
+    } finally {
+      disconnect();
     }
   });
 

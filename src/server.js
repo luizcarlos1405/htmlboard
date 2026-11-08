@@ -74,9 +74,11 @@ function readBody(req, limit = 16 * 1024 * 1024) {
   });
 }
 
-/** How long a canvas has to take a check (htmlboard check), then to do it */
+/** How long a canvas has to take a request (htmlboard check, shot), then to answer it */
 const CLAIM_MS = 15000;
-const CHECK_MS = 180000;
+const ANSWER_MS = 180000;
+/** The most a canvas's answer can weigh (a shot of a long page, as base64) */
+const ANSWER_LIMIT = 256 * 1024 * 1024;
 
 /** True when target is base itself or inside it */
 function isInside(base, target) {
@@ -215,79 +217,99 @@ export function createServer(options = {}) {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  // Checks (htmlboard check). GET /api/check asks the canvases open in a browser (over the live
-  // reload events) to check the designs; the first to claim the check does it, and what it posts
-  // back answers the request.
-  const checks = new Map(); // id → { res, claimed, timer }
+  // Requests to the canvas: checks (htmlboard check), shots (htmlboard shot). Each goes to the
+  // canvases open in a browser over the live reload events, as an event of its kind; the first to
+  // claim it does it, and what it posts back answers the request.
+  const requests = new Map(); // id → { res, kind, answer, claimed, timer }
 
-  function endCheck(id, status, body) {
-    const check = checks.get(id);
-    if (!check) return;
-    clearTimeout(check.timer);
-    checks.delete(id);
-    json(check.res, status, body);
+  function endRequest(id, status, body) {
+    const request = requests.get(id);
+    if (!request) return;
+    clearTimeout(request.timer);
+    requests.delete(id);
+    json(request.res, status, body);
   }
 
-  // only: files or folders (from the designs folder) to check; all the designs when there's none
-  function startCheck(res, only) {
-    const wanted = only.map((item) => item.replace(/\\/g, '/').replace(/^\.?\/+|\/+$/g, ''));
-    const designs = loadDesignsManifest(targetDir, rootDir).sections
-      .flatMap((section) => section.artboards)
-      .map(({ id, file, title, width, height, fit }) => ({ id, file, title, width, height, fit }))
-      .filter(({ file }) => {
-        const own = (designsPath ? file.slice(designsPath.length + 1) : file).split('?')[0];
-        return !wanted.length || wanted.some((item) => !item || own === item || own.startsWith(`${item}/`));
-      });
-    if (!designs.length) {
-      json(res, 404, { error: wanted.some(Boolean) ? `No design on the canvas is in ${only.join(', ')}` : 'There are no designs to check' });
-      return;
-    }
+  /**
+   * Ask the canvas to do something: `payload` goes to it as a `kind` event, and `res` gets what
+   * answer(reply) makes of its reply: `{ status, body }`.
+   */
+  function askCanvas(res, kind, payload, answer) {
     if (!clients.size) {
       json(res, 409, { error: "The canvas isn't open in a browser" });
       return;
     }
     const id = randomUUID();
-    const check = {
+    const request = {
       res,
+      kind,
+      answer,
       claimed: false,
-      timer: setTimeout(() => endCheck(id, 504, { error: "The canvas didn't take the check (reload it in the browser)" }), CLAIM_MS)
+      timer: setTimeout(() => endRequest(id, 504, { error: `The canvas didn't take the ${kind} (reload it in the browser)` }), CLAIM_MS)
     };
-    checks.set(id, check);
+    requests.set(id, request);
     res.on('close', () => {
-      if (checks.get(id) !== check) return; // answered
-      clearTimeout(check.timer);
-      checks.delete(id);
+      if (requests.get(id) !== request) return; // answered
+      clearTimeout(request.timer);
+      requests.delete(id);
     });
-    send('check', { id, designs });
+    send(kind, { id, ...payload });
   }
 
-  function claimCheck(id, res) {
-    const check = checks.get(id);
-    if (!check || check.claimed) {
+  function claimRequest(id, res) {
+    const request = requests.get(id);
+    if (!request || request.claimed) {
       json(res, 409, { error: 'Taken' });
       return;
     }
-    check.claimed = true;
-    clearTimeout(check.timer);
-    check.timer = setTimeout(() => endCheck(id, 504, { error: `The canvas didn't finish the check in ${CHECK_MS / 1000} s` }), CHECK_MS);
+    request.claimed = true;
+    clearTimeout(request.timer);
+    request.timer = setTimeout(() => endRequest(id, 504, { error: `The canvas didn't finish the ${request.kind} in ${ANSWER_MS / 1000} s` }), ANSWER_MS);
     json(res, 200, { ok: true });
   }
 
-  async function finishCheck(id, req, res) {
-    let report;
+  async function finishRequest(id, req, res) {
+    let reply;
     try {
-      report = JSON.parse(await readBody(req));
+      reply = JSON.parse(await readBody(req, ANSWER_LIMIT));
     } catch {
-      json(res, 400, { error: 'Not a report' });
+      json(res, 400, { error: 'Not an answer' });
       return;
     }
-    if (!checks.get(id)?.claimed) {
-      json(res, 404, { error: 'No such check' });
+    const request = requests.get(id);
+    if (!request?.claimed) {
+      json(res, 404, { error: 'No such request' });
       return;
     }
-    if (report.error) endCheck(id, 500, { error: `The canvas couldn't check the designs: ${report.error}` });
-    else endCheck(id, 200, { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] });
+    const { status, body } = request.answer(reply);
+    endRequest(id, status, body);
     res.writeHead(204).end();
+  }
+
+  /** The designs on the canvas, as the canvas needs them to load one afresh */
+  function canvasDesigns() {
+    return loadDesignsManifest(targetDir, rootDir).sections
+      .flatMap((section) => section.artboards)
+      .map(({ id, file, title, width, height, fit }) => ({ id, file, title, width, height, fit }));
+  }
+
+  /** A design's file from the designs folder ("01-shop/cart.html", with its query if it has one) */
+  const ownFile = (file) => (designsPath ? file.slice(designsPath.length + 1) : file);
+
+  // only: files or folders (from the designs folder) to check; all the designs when there's none
+  function startCheck(res, only) {
+    const wanted = only.map((item) => item.replace(/\\/g, '/').replace(/^\.?\/+|\/+$/g, ''));
+    const designs = canvasDesigns().filter(({ file }) => {
+      const own = ownFile(file).split('?')[0];
+      return !wanted.length || wanted.some((item) => !item || own === item || own.startsWith(`${item}/`));
+    });
+    if (!designs.length) {
+      json(res, 404, { error: wanted.some(Boolean) ? `No design on the canvas is in ${only.join(', ')}` : 'There are no designs to check' });
+      return;
+    }
+    askCanvas(res, 'check', { designs }, (report) => (report.error
+      ? { status: 500, body: { error: `The canvas couldn't check the designs: ${report.error}` } }
+      : { status: 200, body: { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] } }));
   }
 
   const server = http.createServer((req, res) => {
@@ -299,11 +321,11 @@ export function createServer(options = {}) {
       startCheck(res, parsedUrl.searchParams.getAll('only'));
       return;
     }
-    if (pathname.startsWith('/api/check/') && req.method === 'POST') {
-      const [id, action, ...rest] = pathname.slice('/api/check/'.length).split('/');
-      if (action === 'claim' && !rest.length) claimCheck(id, res);
-      else if (action === undefined) finishCheck(id, req, res);
-      else json(res, 404, { error: 'Not found' });
+    // The canvas claims a request, then answers it (at /api/check/…, a canvas from before shots)
+    const answering = pathname.match(/^\/api\/(?:requests|check)\/([^/]+)(\/claim)?$/);
+    if (answering && req.method === 'POST') {
+      if (answering[2]) claimRequest(answering[1], res);
+      else finishRequest(answering[1], req, res);
       return;
     }
 
@@ -459,7 +481,7 @@ export function createServer(options = {}) {
     close: () => {
       clearTimeout(watchDebounceTimer);
       if (stopWatching) stopWatching();
-      for (const id of [...checks.keys()]) endCheck(id, 503, { error: 'htmlboard stopped' });
+      for (const id of [...requests.keys()]) endRequest(id, 503, { error: 'htmlboard stopped' });
       for (const client of clients) {
         client.end();
       }

@@ -25,15 +25,53 @@ const SCROLLS = new Set(['auto', 'scroll']);
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/**
- * Check designs, each `{ file, title, width, height, frameHeight }` (height: the design's own, 0 when
- * it grows with its page; frameHeight: its frame's), and say what went wrong in each.
- */
-export async function checkDesigns(designs) {
+/** A box out of sight, for the frames that load designs afresh; the caller removes it */
+export function hiddenBox() {
   const box = document.createElement('div');
   box.setAttribute('aria-hidden', 'true');
   box.style.cssText = 'position: fixed; left: 0; top: 0; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none;';
   document.body.append(box);
+  return box;
+}
+
+/**
+ * A design's page loaded afresh in a frame of its size in `box`, once it has settled: the frame,
+ * its window and document (none when there's no page to see), and whether it finished loading in
+ * time. With `grow`, a design without a height of its own gets a frame as tall as its page, as the
+ * canvas shows it. The caller removes the frame.
+ *
+ * @param {{ file: string, width: number, height?: number, frameHeight: number }} design
+ */
+export async function openDesign(design, box, { grow = false } = {}) {
+  const frame = document.createElement('iframe');
+  frame.name = 'htmlboard-check'; // the probe listens in these frames only
+  frame.setAttribute('scrolling', 'no');
+  frame.style.cssText = `position: absolute; left: 0; top: 0; border: 0; width: ${design.width}px; height: ${design.frameHeight}px;`;
+  const loaded = new Promise((resolve) => frame.addEventListener('load', () => resolve(true), { once: true }));
+  frame.src = encodeURI(`/${design.file}`);
+  box.append(frame);
+  const finished = await Promise.race([loaded, wait(LOAD_MS).then(() => false)]);
+  const doc = frame.contentDocument;
+  if (!doc?.body) return { frame, finished, win: null, doc: null };
+  if (finished) await settle(doc);
+  if (grow && !design.height) {
+    // Measured once: a page always a bit taller than its frame would grow forever
+    const tall = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight));
+    if (tall > design.frameHeight) {
+      frame.style.height = `${tall}px`;
+      await settle(doc); // a page that lays itself out again at its new size (no animation frame: the frame isn't drawn)
+    }
+  }
+  return { frame, finished, win: frame.contentWindow, doc };
+}
+
+/**
+ * Check designs, each `{ file, title, width, height, frameHeight, grow }` (height: the design's own,
+ * 0 when it grows with its page; frameHeight: its frame's; grow: to its page's height, when the
+ * canvas hasn't measured it), and say what went wrong in each.
+ */
+export async function checkDesigns(designs) {
+  const box = hiddenBox();
   const results = [];
   let next = 0;
   const worker = async () => {
@@ -56,27 +94,20 @@ async function checkDesign(design, box) {
     file: design.file, title: design.title, width: design.width, height: design.height || null,
     problems: [], resources: new Map(),
   };
-  const frame = document.createElement('iframe');
-  frame.name = 'htmlboard-check'; // the probe listens in these frames only
-  frame.setAttribute('scrolling', 'no');
-  frame.style.cssText = `position: absolute; left: 0; top: 0; border: 0; width: ${design.width}px; height: ${design.frameHeight}px;`;
-  const loaded = new Promise((resolve) => frame.addEventListener('load', () => resolve(true), { once: true }));
-  frame.src = encodeURI(`/${design.file}`);
-  box.append(frame);
+  let frame;
   try {
-    const finished = await Promise.race([loaded, wait(LOAD_MS).then(() => false)]);
-    const doc = frame.contentDocument;
-    if (!doc?.body) {
+    const page = await openDesign(design, box, { grow: design.grow });
+    frame = page.frame;
+    if (!page.doc) {
       result.problems.push({ level: 'error', kind: 'blank' });
       return result;
     }
-    if (finished) await settle(doc);
-    else result.problems.push({ level: 'error', kind: 'timeout', seconds: LOAD_MS / 1000 });
-    inspect(frame.contentWindow, doc, design, result);
+    if (!page.finished) result.problems.push({ level: 'error', kind: 'timeout', seconds: LOAD_MS / 1000 });
+    inspect(page.win, page.doc, design, result);
   } catch (error) {
     result.problems.push({ level: 'error', kind: 'check', message: String(error?.message || error) });
   } finally {
-    frame.remove();
+    frame?.remove();
   }
   return result;
 }

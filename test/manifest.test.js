@@ -156,6 +156,6 @@ describe('Manifest short form and --root', () => {
   });
 
   test('the designs folder must be inside the root', async () => {
-    await assert.rejects(startServer({ dir: os.tmpdir(), root, port: 3941 }), /must be inside the root/);
+    await assert.rejects(startServer({ dir: os.tmpdir(), root, port: 3944 }), /must be inside the root/);
   });
 });
