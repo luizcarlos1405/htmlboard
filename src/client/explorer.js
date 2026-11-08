@@ -34,6 +34,10 @@ const PICTURES_AT_ONCE = 3; // pictures made at the same time
 const DEFAULT_SIZE = [1200, 800]; // a design whose entry gives no size; without a height it grows with its page
 const FIT_HEIGHT = 100;    // a frame that fits its page however short (a component's) starts this tall
 
+// Opened out of sight by the server (a headless browser, at /?worker) to do htmlboard check and shot
+// with no canvas open in a browser: it takes their requests and shows no designs.
+const WORKER = new URLSearchParams(location.search).has('worker');
+
 const $ = (id) => document.getElementById(id);
 const els = {
   app: $('app'), title: $('title'), list: $('list'), count: $('count'), search: $('search'),
@@ -1325,15 +1329,7 @@ function connect() {
       // Not ours.
     }
   });
-  for (const [kind, run] of [['check', runCheck], ['shot', runShot]]) {
-    source.addEventListener(kind, (event) => {
-      try {
-        take(JSON.parse(event.data), run);
-      } catch {
-        // Not ours.
-      }
-    });
-  }
+  listenForRequests(source);
   // EventSource keeps trying to reconnect by itself.
   source.addEventListener('error', () => {
     lost = true;
@@ -1349,11 +1345,23 @@ let working = Promise.resolve();
 async function take(request, run) {
   let claimed = false;
   try {
-    claimed = (await fetch(`/api/requests/${request.id}/claim`, { method: 'POST' })).ok;
+    claimed = (await fetch(`/api/requests/${request.id}/claim${WORKER ? '?headless' : ''}`, { method: 'POST' })).ok;
   } catch {
     // The server is gone
   }
   if (claimed) working = working.then(() => run(request));
+}
+
+function listenForRequests(source) {
+  for (const [kind, run] of [['check', runCheck], ['shot', runShot]]) {
+    source.addEventListener(kind, (event) => {
+      try {
+        take(JSON.parse(event.data), run);
+      } catch {
+        // Not ours.
+      }
+    });
+  }
 }
 
 /** Answers a request: whether the server got the answer */
@@ -1375,8 +1383,10 @@ async function runCheck({ id, designs: boards }) {
       title: board.title || board.file,
       width: Number(board.width) || DEFAULT_SIZE[0],
       height,
-      // Without a height, the frame is as tall as the canvas has it (as tall as its page)
+      // Without a height, the frame is as tall as the canvas has it (as tall as its page), or grows
+      // to its page where there's no canvas (out of sight)
       frameHeight: height || (shown?.autoHeight ? shown.h : board.fit ? FIT_HEIGHT : DEFAULT_SIZE[1]),
+      grow: !height && !shown,
     };
   });
   const what = designs.length === 1 ? designs[0].title : `${designs.length} designs`;
@@ -1701,6 +1711,11 @@ function wire() {
 // ---------------------------------------------------------------- start
 
 async function start() {
+  if (WORKER) {
+    document.title = 'htmlboard (out of sight)';
+    listenForRequests(new EventSource('/api/events')); // and it reconnects by itself
+    return;
+  }
   let manifest;
   try {
     const [designs, health] = await Promise.all([

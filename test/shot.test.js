@@ -58,14 +58,14 @@ describe('htmlboard shot', () => {
     fs.mkdirSync(path.join(dir, 'designs', '01-shop'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'designs', '01-shop', '01-cart.html'), page('Cart'));
     fs.writeFileSync(path.join(dir, 'designs', 'home.html'), page('Home', '<meta name="htmlboard:variant" content="?theme=dark · dark">\n'));
-    server = await startServer({ dir: path.join(dir, 'designs'), port: 3951 });
+    server = await startServer({ dir: path.join(dir, 'designs'), port: 3951, browser: null }); // no browser out of sight: these tests play the canvas
   });
   after(async () => {
     await server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test('without a canvas open in a browser, a shot says so', async () => {
+  test('without a canvas open in a browser, nor one to open it in out of sight, a shot says so', async () => {
     const res = await fetch(`${server.url}/api/shot?file=home.html`);
     assert.equal(res.status, 409);
   });
@@ -153,7 +153,7 @@ describe('htmlboard shot', () => {
     }
     const unopened = await cli(['designs/home.html', '-p', '3951'], dir);
     assert.equal(unopened.code, 2);
-    assert.match(unopened.stderr, /isn't open in a browser, and the shot runs there/);
+    assert.match(unopened.stderr, /isn't open in a browser, and there's no browser to run the shot in out of sight/);
     for (const args of [[], ['a.html', 'b.html'], ['a.html', '--max', '0'], ['a.html', '--max', '9', '--scale', '2'], ['a.html', '-s'], ['a.html', '--bogus']]) {
       assert.equal((await cli(args, dir)).code, 2, args.join(' '));
     }

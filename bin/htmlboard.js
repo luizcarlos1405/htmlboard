@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../src/server.js';
@@ -83,7 +84,7 @@ Usage:
   htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
-  htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, from the canvas open in a browser
+  htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
 
 Options:
@@ -307,29 +308,37 @@ async function runCheckCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 Usage:
-  htmlboard check [directory or file] [-p <port>] [--json]
+  htmlboard check [directory or file] [-p <port>] [-r <root>] [--json]
 
-Has the canvas running for the designs (open in a browser: the check runs there) load each one
-afresh and prints what went wrong, in a few lines of text: script errors and console.error, files
-that aren't there, components that weren't built, fonts that didn't load, content cut at the
-frame's edge, text cut off or spilling out of its box. A directory checks the designs in it, a
-file just that design (default: the current directory).
+Has the canvas running for the designs load each one afresh in a browser and prints what went
+wrong, in a few lines of text: script errors and console.error, files that aren't there, components
+that weren't built, fonts that didn't load, content cut at the frame's edge, text cut off or
+spilling out of its box. A directory checks the designs in it, a file just that design (default:
+the current directory).
 
-Exits with 1 when it finds problems, 2 when it can't check (no canvas running, or none open).
+It runs in the browser the canvas is open in. With none open, the canvas opens itself out of sight
+in Chrome, Chromium, Edge or Firefox (HTMLBOARD_BROWSER=<path> names another, =none turns it off);
+with no canvas running for the designs, the check starts one for itself.
+
+Exits with 1 when it finds problems, 2 when it can't check.
 
 Options:
   -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
+  -r, --root <path>     With no canvas running: serve files from this folder, as htmlboard --root
       --json            The report as JSON
 `);
     return;
   }
   let port;
+  let root;
   let asJson = false;
   const targets = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--port' || arg === '-p') port = parseInt(args[++i], 10);
     else if (arg.startsWith('--port=')) port = parseInt(arg.slice('--port='.length), 10);
+    else if (arg === '--root' || arg === '-r') root = args[++i];
+    else if (arg.startsWith('--root=')) root = arg.slice('--root='.length);
     else if (arg === '--json') asJson = true;
     else if (arg.startsWith('-')) {
       console.error(`[htmlboard] Unknown option: ${arg} (see htmlboard check --help)`);
@@ -337,9 +346,9 @@ Options:
     } else targets.push(arg);
   }
   try {
-    const { canvas, report } = await runCheck(targets[0], { port });
+    const { canvas, report } = await runCheck(targets[0], { port, root });
     if (asJson) console.log(JSON.stringify(report, null, 2));
-    else process.stdout.write(formatReport(report, { name: shownPath(report.dir), url: canvas.url }));
+    else process.stdout.write(formatReport(report, { name: shownPath(report.dir), url: canvas.url, local: canvas.local }));
     process.exitCode = hasProblems(report) ? 1 : 0;
   } catch (err) {
     console.error(err instanceof CanvasError ? err.message : `[htmlboard] ${err.message}`);
@@ -351,12 +360,13 @@ async function runShotCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 Usage:
-  htmlboard shot <file> [-s <selector>] [--max <px> | --scale <n>] [-o <file.png>] [-p <port>]
+  htmlboard shot <file> [-s <selector>] [--max <px> | --scale <n>] [-o <file.png>] [-p <port>] [-r <root>]
 
 Saves a PNG of a design, or of one element in it, and prints where, with its size: for an AI agent
 to look at the design. The canvas running for the designs draws it in a browser, from the files as
-they are now. Without -o, it goes in a folder of the system's temporary files (a new shot of the
-same replaces it).
+they are now: as for htmlboard check, one out of sight when none is open, and with no canvas
+running, the shot starts one. Without -o, the PNG goes in a folder of the system's temporary files
+(a new shot of the same replaces it).
 
 The image is the design's size (as tall as its page when it has no height of its own). An agent
 pays for an image by its area, so a part (-s) or a smaller image (--max) costs less.
@@ -370,11 +380,13 @@ Options:
       --scale <n>       Image px per CSS px (default 1; 2 for a sharper look at a detail)
   -o, --output <file>   Where to save the PNG
   -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
+  -r, --root <path>     With no canvas running: serve files from this folder, as htmlboard --root
       --json            Where it went and its size as JSON
 `);
     return;
   }
   let port;
+  let root;
   let selector;
   let max;
   let scale;
@@ -391,6 +403,7 @@ Options:
     const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, null];
     const take = () => inline ?? value(++i);
     if (flag === '--port' || flag === '-p') port = parseInt(take(), 10);
+    else if (flag === '--root' || flag === '-r') root = take();
     else if (flag === '--selector' || flag === '-s') selector = take();
     else if (flag === '--max') max = Number(take());
     else if (flag === '--scale') scale = Number(take());
@@ -403,11 +416,12 @@ Options:
   if (targets.length > 1) return usage(`One design at a time: ${targets.join(', ')}`);
   if (selector === null || selector === '') return usage('--selector needs a CSS selector');
   if (output === null || output === '') return usage('--output needs a file');
+  if (root === null || root === '') return usage('--root needs a folder');
   if (max !== undefined && !(max > 0)) return usage('--max needs a number of px');
   if (scale !== undefined && !(scale > 0)) return usage('--scale needs a number above 0');
   if (max !== undefined && scale !== undefined) return usage('--max or --scale, not both');
   try {
-    const { canvas, shot } = await runShot(targets[0], { selector, max, scale, port });
+    const { canvas, shot } = await runShot(targets[0], { selector, max, scale, port, root });
     const out = output ? path.resolve(output) : shotPath(canvas.dir, shot.file, { selector });
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, shot.png);
@@ -478,6 +492,11 @@ Without --write it only shows what it would do, and checks that the canvas stays
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Stopped (Ctrl + C, a kill), it quits as on its own, so the browsers it opened out of sight quit too
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(signal, () => process.exit(128 + (os.constants.signals[signal] || 0)));
+  }
 
   if (args[0] === 'skills') {
     runSkills(args.slice(1));

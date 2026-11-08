@@ -35,7 +35,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - 📂 **Designs That Describe Themselves**: Every HTML file is a design, each folder a section, number prefixes the order. A file says its own size, category and variants in a `<meta>` tag or two, so adding a design means writing one file — nothing to keep in sync.
 - 🧩 **Components**: Each file in `components/` is a custom element named after it (`tx-item.html` is `<tx-item>`), so the sidebar every screen shares is written once and used as one tag: attributes, slots and scoped CSS, built in the light DOM with your `styles.css`, no build step.
 - 🗂️ **A Catalog for Agents**: `htmlboard catalog` reads the project and prints what the designs share in a few lines: each stylesheet's variables and classes, the scripts, every component with its attributes, an example and where it's used. An agent learns your styles and components without reading every file, and since it's read from the files, it is never out of date.
-- 🩺 **Checks for Agents**: `htmlboard check` has the canvas open in your browser load each design again and report, as text, what went wrong: script errors, missing files and components, fonts that didn't load, content cut at the frame's edge, text cut off or spilling out of its box. An agent checks its work without screenshots.
+- 🩺 **Checks for Agents**: `htmlboard check` has the canvas load each design again in a browser (yours, or one out of sight) and report, as text, what went wrong: script errors, missing files and components, fonts that didn't load, content cut at the frame's edge, text cut off or spilling out of its box. An agent checks its work without screenshots.
 - 📷 **Shots for Agents**: `htmlboard shot` saves a design, or one element of it, as a PNG and prints where, so an agent can look at what it made without a screenshot tool of its own. A part, or a smaller image, costs it fewer tokens.
 - 📐 **Optional `designs.json`**: Curates when you want it (section titles, order, overrides); designs it doesn't list still show at the end, or don't (`"unlisted": "hide"`). `htmlboard migrate` moves an existing one into the files.
 - 📱 **Device Filters**: **Mobile**, **Tablet** and **Desktop** (and **Components**, or your own categories) lay out just those designs, side by side, to compare them.
@@ -84,7 +84,7 @@ Usage:
   htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
-  htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, from the canvas open in a browser
+  htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
 
 Options:
@@ -124,7 +124,7 @@ htmlboard components design
 # What the designs in ./design share, in a few lines (what the agent skill reads)
 htmlboard catalog design
 
-# What went wrong in them: script errors, missing files, cut-off text (the canvas must be open)
+# What went wrong in them: script errors, missing files, cut-off text
 htmlboard check design
 
 # A design's table as a PNG, for an agent to look at
@@ -217,7 +217,7 @@ On the samples it is 2 KB instead of the 9 KB of `styles.css` and `components/`,
 
 ### Checking the designs: `htmlboard check`
 
-An agent can't see the canvas, and a screenshot costs it many tokens, when it can take one at all. `htmlboard check` asks the canvas open in your browser to look instead: each design loads again, out of sight, in a frame of its size, and what went wrong comes back as text:
+An agent can't see the canvas, and a screenshot costs it many tokens, when it can take one at all. `htmlboard check` asks the canvas to look instead: each design loads again, out of sight, in a frame of its size, and what went wrong comes back as text:
 
 ```text
 $ npx htmlboard check designs
@@ -239,7 +239,9 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
 
 - **What it finds:** script errors and `console.error`; files that aren't there (a stylesheet's fonts and images, a fetch's data too); components that weren't built; fonts that didn't load; a page that shows nothing; content cut at the frame's right edge; text cut off by a box that hides its overflow, or spilling out of its box. A note says when content goes on below a frame of fixed height: fine for a screen that scrolls, not for a flyer.
 - **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (colors, spacing, alignment).
-- **It runs in your browser**, so the canvas must be open there. Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
+- **It runs in a browser**: the one the canvas is open in, or with none open (a background session, nobody at the computer), one the canvas opens out of sight: Chrome, Chromium or Edge, else Firefox, headless. `HTMLBOARD_BROWSER=<path>` names another, `HTMLBOARD_BROWSER=none` turns this off. It quits after a minute without checks or shots, and when the canvas stops. Nothing is downloaded: the browser only opens the canvas's page, which does the work.
+- **With no canvas running** for the designs (CI, a fresh worktree), the check starts one for itself, out of sight, and stops it when it's done. That one serves the designs folder (the nearest folder above the file with a `designs.json`, `styles.css`, `components.js` or `components/`), so if the designs link files outside it, add `--root <folder>` as you would to the canvas; the report says so when files are missing.
+- Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
 - A file or a folder checks just those designs: `htmlboard check designs/01-screens/02-customers.html`. It finds the canvas on ports 3000 to 3020 (`-p` for another) and exits with 1 when there are problems, 2 when it can't check. `--json` gives the report as data.
 
 ### Looking at a design: `htmlboard shot`
@@ -251,7 +253,7 @@ $ npx htmlboard shot designs/01-screens/02-customers.html -s table
 /tmp/htmlboard-shots-you/designs-dd2158/01-screens-02-customers--table.png (934 × 358)
 ```
 
-- **Drawn by the canvas**, like the check: the design loads afresh, out of sight, in a frame of its size (as tall as its page when it has no height of its own), and your browser draws it as Copy image does, from the files as they are on disk.
+- **Drawn by the canvas**, like the check, and in the same browser (yours, or one out of sight; with no canvas running, the shot starts one): the design loads afresh, out of sight, in a frame of its size (as tall as its page when it has no height of its own), and the browser draws it as Copy image does, from the files as they are on disk.
 - **A part costs less:** an agent pays for an image by its area, roughly width × height / 750 tokens for Claude, so a 1440 × 900 screen is about 1.7k tokens. `-s <selector>` shoots the first element the CSS selector matches, which is cheaper and sharper; `--max 1000` makes the longest side at most 1000 px for an overview; `--scale 2` doubles the pixels for a close look at a detail.
 - **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design and the selector, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
 - It exits with 1 when it can't take the shot as asked (no element matches the selector, or the file isn't a design on the canvas) and 2 when it can't reach the canvas. What an image can't show, a shot can't either: other sites' images that don't allow it, pages inside the page, shadow DOM.
@@ -463,12 +465,12 @@ const catalog = buildCatalog('./designs'); // { root } for links that start with
 console.log(formatCatalog(catalog));
 ```
 
-And the check, which needs the canvas open in a browser (the server answers it at `GET /api/check`, `?only=<file or folder>` for some of the designs):
+And the check (the server answers it at `GET /api/check`, `?only=<file or folder>` for some of the designs, opening a browser out of sight when none has the canvas open; `startServer({ browser: null })` turns that off):
 
 ```javascript
 import { runCheck, formatReport } from 'htmlboard';
 
-const { canvas, report } = await runCheck('./designs'); // { port } when it isn't on 3000 to 3020
+const { canvas, report } = await runCheck('./designs'); // { port } when it isn't on 3000 to 3020; with none running, one is started
 // → report: { dir, root, designs: [{ file, title, width, height, problems: [{ level: 'error', kind: 'missing', path: '/img/logo.png', tag: 'img' }, …] }, …] }
 console.log(formatReport(report, { url: canvas.url }));
 ```
@@ -498,7 +500,8 @@ htmlboard/
 │   ├── designs.js        # Which designs a folder holds: files, their tags, designs.json
 │   ├── components.js     # Components: their previews, `htmlboard components`
 │   ├── catalog.js        # What the designs share: `htmlboard catalog`
-│   ├── canvases.js       # The canvases running on this machine, and asking one
+│   ├── canvases.js       # The canvases running on this machine, asking one, starting one for a command
+│   ├── browser.js        # A browser to open the canvas in out of sight (headless)
 │   ├── check.js          # `htmlboard check`: asks the canvas, prints its report
 │   ├── shot.js           # `htmlboard shot`: asks the canvas for a PNG
 │   ├── migrate.js        # `htmlboard migrate`

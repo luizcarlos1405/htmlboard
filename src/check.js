@@ -1,29 +1,34 @@
 import path from 'node:path';
-import { CanvasError, canvasFor, askCanvas } from './canvases.js';
+import { CanvasError, withCanvas, askCanvas } from './canvases.js';
 
-// `htmlboard check`: the canvas running for a folder, open in a browser, loads its designs and says
-// what went wrong in each (see client/check.js); this finds that canvas, asks it, and puts the
-// answer in a few lines of text.
+// `htmlboard check`: the canvas running for a folder loads its designs in a browser and says what
+// went wrong in each (see client/check.js); this finds that canvas, asks it, and puts the answer in
+// a few lines of text. With no canvas open in a browser, the canvas opens one out of sight; with
+// none running for the folder, the check starts one.
 
 /** A problem the check couldn't get past (no canvas running, none open in a browser): exit code 2 */
 export { CanvasError as CheckError };
 
 /**
  * Check designs with the canvas that shows them: a designs folder, a folder in it, or a design's
- * file (default: all the designs of the canvas found). The canvas must be open in a browser, where
- * the check runs.
+ * file (default: all the designs of the canvas found). The check runs in a browser: the one the
+ * canvas is open in, else one the canvas opens out of sight. With no canvas running for the target,
+ * one is started for the check (see withCanvas in canvases.js).
  *
  * @param {string} [target] A path; without one, the canvas's whole folder (looked for from the current one)
  * @param {object} [options]
  * @param {number} [options.port] The canvas's port (default: looked for on 3000 to 3020)
- * @returns {Promise<{canvas: object, report: object}>} The canvas (its url, dir, root) and its report
+ * @param {string} [options.root] With no canvas running: the folder to serve files from, as --root
+ * @returns {Promise<{canvas: object, report: object}>} The canvas (its url, dir, root; local: started
+ *   for the check) and its report (browser: the headless browser it ran in, if it did)
  */
-export async function runCheck(target, { port } = {}) {
-  const { canvas, only } = await canvasFor(target, { port });
-  const answer = await askCanvas(canvas, `/api/check${only ? `?only=${encodeURIComponent(only)}` : ''}`, 'the check');
-  if (answer.status !== 200) throw new CanvasError(`${answer.error || `The canvas answered ${answer.status}`}.`);
-  const { status, ...report } = answer;
-  return { canvas, report };
+export async function runCheck(target, { port, root } = {}) {
+  return withCanvas(target, { port, root }, async (canvas, only) => {
+    const answer = await askCanvas(canvas, `/api/check${only ? `?only=${encodeURIComponent(only)}` : ''}`, 'the check');
+    if (answer.status !== 200) throw new CanvasError(`${answer.error || `The canvas answered ${answer.status}`}.`);
+    const { status, ...report } = answer;
+    return { canvas, report };
+  });
 }
 
 const LEVELS = ['error', 'layout', 'note'];
@@ -41,8 +46,9 @@ export const hasProblems = (report) => report.designs.some((design) => design.pr
  * @param {object} [options]
  * @param {string} [options.name] How to call the designs folder (default: its path)
  * @param {string} [options.url] The canvas's address, to say where the check ran
+ * @param {boolean} [options.local] The canvas was started for the check (none was running)
  */
-export function formatReport(report, { name = report.dir, url } = {}) {
+export function formatReport(report, { name = report.dir, url, local = false } = {}) {
   const prefix = path.relative(report.root, report.dir).split(path.sep).join('/');
   // A path from the server's root ("/design/app.js"), from the designs folder instead ("app.js")
   const show = (file) => {
@@ -52,7 +58,10 @@ export function formatReport(report, { name = report.dir, url } = {}) {
   const designs = report.designs;
   const failing = designs.filter((design) => design.problems.some((problem) => problem.level !== 'note')).length;
   const noted = designs.filter((design) => design.problems.length && design.problems.every((problem) => problem.level === 'note')).length;
-  const lines = [`Checked ${count(designs.length, 'design')} in ${name}${url ? ` (the canvas at ${url})` : ''}: ${
+  const browser = report.browser ? `headless ${report.browser}` : '';
+  const where = local ? ` (in ${browser || 'a browser'}, as no canvas was running)`
+    : url ? ` (the canvas at ${url}${browser ? `, in ${browser}` : ''})` : '';
+  const lines = [`Checked ${count(designs.length, 'design')} in ${name}${where}: ${
     failing ? `${failing} with problems` : 'no problems found'}${noted ? `, ${noted} with notes` : ''}.`];
   const order = (problem) => LEVELS.indexOf(problem.level) * KINDS.length + KINDS.indexOf(problem.kind);
   for (const design of designs.filter((d) => d.problems.length)) {
@@ -60,6 +69,10 @@ export function formatReport(report, { name = report.dir, url } = {}) {
     for (const problem of [...design.problems].sort((a, b) => order(a) - order(b))) {
       lines.push(`  ${problem.level.padEnd(6)} ${describe(problem, show)}`);
     }
+  }
+  // Started for the check, the canvas served the designs folder alone, unless told otherwise
+  if (local && report.root === report.dir && designs.some((design) => design.problems.some((problem) => problem.kind === 'missing'))) {
+    lines.push('', `No canvas was running, so only ${name} was served: if the designs link files outside it, add --root <folder>, as when you start the canvas.`);
   }
   return `${lines.join('\n')}\n`;
 }

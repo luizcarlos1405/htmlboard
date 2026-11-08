@@ -74,7 +74,7 @@ describe('htmlboard check', () => {
     fs.writeFileSync(path.join(dir, 'designs', 'home.html'), page('Home'));
     fs.writeFileSync(path.join(dir, 'designs', 'components', 'x-tag.html'), '<!-- <x-tag></x-tag> -->\n<b>tag</b>\n');
     fs.writeFileSync(path.join(dir, 'designs', 'designs.json'), '{ "components": "show" }');
-    server = await startServer({ dir: path.join(dir, 'designs'), port: 3941 });
+    server = await startServer({ dir: path.join(dir, 'designs'), port: 3941, browser: null }); // no browser out of sight: these tests play the canvas
   });
   after(async () => {
     await server.close();
@@ -94,10 +94,10 @@ describe('htmlboard check', () => {
     assert.equal((await fetch(`${server.url}/nope.png`, { method: 'HEAD' })).status, 404);
   });
 
-  test('without a canvas open in a browser, a check says so', async () => {
+  test('without a canvas open in a browser, nor one to open it in out of sight, a check says so', async () => {
     const res = await fetch(`${server.url}/api/check`);
     assert.equal(res.status, 409);
-    assert.match((await res.json()).error, /isn't open in a browser/);
+    assert.match((await res.json()).error, /isn't open in a browser, and there's no browser to open it in out of sight/);
   });
 
   test('the canvas gets the designs to check, the first to claim does it, and its report answers', async () => {
@@ -186,13 +186,13 @@ describe('htmlboard check', () => {
     }
   });
 
-  test('CLI: with no canvas running, or none open in a browser, it says so and exits 2', async () => {
+  test('CLI: with no canvas at the port, or none open in a browser nor a browser to open, it says so and exits 2', async () => {
     const closed = await cli(['designs', '-p', '3949'], dir);
     assert.equal(closed.code, 2);
     assert.match(closed.stderr, /No htmlboard is running at http:\/\/localhost:3949/);
     const unopened = await cli(['designs', '-p', '3941'], dir);
     assert.equal(unopened.code, 2);
-    assert.match(unopened.stderr, /The canvas at http:\/\/localhost:3941 isn't open in a browser, and the check runs there/);
+    assert.match(unopened.stderr, /The canvas at http:\/\/localhost:3941 isn't open in a browser, and there's no browser to run the check in out of sight/);
     assert.equal((await cli(['--bogus'], dir)).code, 2);
   });
 });

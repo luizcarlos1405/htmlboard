@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { loadDesignsManifest } from './designs.js';
 import { componentPreview } from './components.js';
+import { findBrowser, launchBrowser } from './browser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +80,9 @@ const CLAIM_MS = 15000;
 const ANSWER_MS = 180000;
 /** The most a canvas's answer can weigh (a shot of a long page, as base64) */
 const ANSWER_LIMIT = 256 * 1024 * 1024;
+/** How long a browser opened out of sight has to open the canvas, and stays open without requests */
+const HEADLESS_OPEN_MS = 30000;
+const HEADLESS_IDLE_MS = 60000;
 
 /** True when target is base itself or inside it */
 function isInside(base, target) {
@@ -200,7 +204,15 @@ export function findAvailablePort(startPort) {
 }
 
 /**
- * Creates and starts the HtmlBoard server
+ * Creates the HtmlBoard server (startServer() starts it).
+ *
+ * @param {object} [options]
+ * @param {string} [options.dir] The designs folder (default: the current one)
+ * @param {string} [options.root] The folder files are served from (default: the designs folder)
+ * @param {boolean} [options.watch] Watch the files and push their changes to the canvas (default: true)
+ * @param {object|null} [options.browser] The browser to open the canvas in out of sight when a
+ *   request finds none open ({ path, name, engine }, see browser.js); null for none (default: found)
+ * @param {number} [options.headlessIdleMs] How long that browser stays open without requests
  */
 export function createServer(options = {}) {
   const targetDir = path.resolve(options.dir || process.cwd());
@@ -220,7 +232,7 @@ export function createServer(options = {}) {
   // Requests to the canvas: checks (htmlboard check), shots (htmlboard shot). Each goes to the
   // canvases open in a browser over the live reload events, as an event of its kind; the first to
   // claim it does it, and what it posts back answers the request.
-  const requests = new Map(); // id → { res, kind, answer, claimed, timer }
+  const requests = new Map(); // id → { res, kind, answer, claimed, headless, timer }
 
   function endRequest(id, status, body) {
     const request = requests.get(id);
@@ -228,16 +240,25 @@ export function createServer(options = {}) {
     clearTimeout(request.timer);
     requests.delete(id);
     json(request.res, status, body);
+    idleHeadless();
   }
 
   /**
    * Ask the canvas to do something: `payload` goes to it as a `kind` event, and `res` gets what
-   * answer(reply) makes of its reply: `{ status, body }`.
+   * answer(reply) makes of its reply: `{ status, body }`. With no canvas open in a browser, the
+   * server opens one out of sight first.
    */
-  function askCanvas(res, kind, payload, answer) {
+  async function askCanvas(res, kind, payload, answer) {
+    clearTimeout(headless.idle);
     if (!clients.size) {
-      json(res, 409, { error: "The canvas isn't open in a browser" });
-      return;
+      try {
+        await openHeadless();
+      } catch (error) {
+        json(res, error.browser === false ? 409 : 503, { error: error.message, ...(error.browser === false ? { browser: false } : {}) });
+        idleHeadless();
+        return;
+      }
+      if (res.destroyed) return; // the asker gave up meanwhile
     }
     const id = randomUUID();
     const request = {
@@ -252,17 +273,20 @@ export function createServer(options = {}) {
       if (requests.get(id) !== request) return; // answered
       clearTimeout(request.timer);
       requests.delete(id);
+      idleHeadless();
     });
     send(kind, { id, ...payload });
   }
 
-  function claimRequest(id, res) {
+  // headless: the canvas claiming is the one the server opened out of sight
+  function claimRequest(id, res, { headless: hidden = false } = {}) {
     const request = requests.get(id);
     if (!request || request.claimed) {
       json(res, 409, { error: 'Taken' });
       return;
     }
     request.claimed = true;
+    request.headless = hidden;
     clearTimeout(request.timer);
     request.timer = setTimeout(() => endRequest(id, 504, { error: `The canvas didn't finish the ${request.kind} in ${ANSWER_MS / 1000} s` }), ANSWER_MS);
     json(res, 200, { ok: true });
@@ -282,8 +306,71 @@ export function createServer(options = {}) {
       return;
     }
     const { status, body } = request.answer(reply);
-    endRequest(id, status, body);
+    // Done out of sight: in which browser
+    endRequest(id, status, request.headless && status === 200 && headless.browser ? { ...body, browser: headless.browser.name } : body);
     res.writeHead(204).end();
+  }
+
+  // A canvas out of sight: with none open in a browser, a request opens the canvas in a headless
+  // browser (see browser.js), which stays open for the next ones and quits after a while without.
+  const headless = {
+    browser: undefined, // what options.browser or findBrowser() gives, looked up once
+    running: null, // the browser, open
+    opening: null, // a promise, until it has connected
+    idle: 0,
+    waiting: new Set(), // resolves the ones waiting for a canvas to connect
+    idleMs: options.headlessIdleMs ?? HEADLESS_IDLE_MS
+  };
+
+  function openHeadless() {
+    headless.opening ||= (async () => {
+      if (headless.browser === undefined) headless.browser = options.browser !== undefined ? options.browser : findBrowser();
+      const { browser } = headless;
+      if (!browser) {
+        throw Object.assign(new Error("The canvas isn't open in a browser, and there's no browser to open it in out of sight"), { browser: false });
+      }
+      const running = launchBrowser(browser, `http://127.0.0.1:${server.address().port}/?worker`);
+      headless.running = running;
+      running.exited.then(() => {
+        if (headless.running !== running) return;
+        headless.running = null; // quit by itself (a crash): its profile goes, and the next request opens another
+        running.close();
+      });
+      let timer;
+      try {
+        await Promise.race([
+          new Promise((resolve) => headless.waiting.add(resolve)),
+          running.exited.then(({ error, code, signal }) => {
+            throw new Error(`${browser.name} couldn't open the canvas (${error?.message || (signal ? `stopped by ${signal}` : `exit code ${code}`)})`);
+          }),
+          new Promise((resolve, reject) => {
+            timer = setTimeout(() => reject(new Error(`${browser.name} didn't open the canvas in ${HEADLESS_OPEN_MS / 1000} s`)), HEADLESS_OPEN_MS);
+          })
+        ]);
+      } catch (error) {
+        headless.waiting.clear();
+        closeHeadless();
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    })().finally(() => {
+      headless.opening = null;
+    });
+    return headless.opening;
+  }
+
+  // Quits it after a while without requests
+  function idleHeadless() {
+    clearTimeout(headless.idle);
+    if (headless.running && !requests.size && !headless.opening) headless.idle = setTimeout(closeHeadless, headless.idleMs);
+  }
+
+  function closeHeadless() {
+    clearTimeout(headless.idle);
+    const { running } = headless;
+    headless.running = null;
+    return running ? running.close() : Promise.resolve();
   }
 
   /** The designs on the canvas, as the canvas needs them to load one afresh */
@@ -353,7 +440,7 @@ export function createServer(options = {}) {
     // The canvas claims a request, then answers it (at /api/check/…, a canvas from before shots)
     const answering = pathname.match(/^\/api\/(?:requests|check)\/([^/]+)(\/claim)?$/);
     if (answering && req.method === 'POST') {
-      if (answering[2]) claimRequest(answering[1], res);
+      if (answering[2]) claimRequest(answering[1], res, { headless: parsedUrl.searchParams.has('headless') });
       else finishRequest(answering[1], req, res);
       return;
     }
@@ -380,6 +467,8 @@ export function createServer(options = {}) {
 
       res.write(`event: connected\ndata: ${JSON.stringify({ time: Date.now() })}\n\n`);
       clients.add(res);
+      for (const resolve of headless.waiting) resolve(); // requests waiting for a canvas
+      headless.waiting.clear();
 
       const heartbeat = setInterval(() => {
         res.write(': ping\n\n');
@@ -481,36 +570,40 @@ export function createServer(options = {}) {
   let watchDebounceTimer = null;
   let stopWatching = null;
 
-  try {
-    stopWatching = watchTree(rootDir, (file, isFolder) => {
-      if (file.endsWith('~') || file.endsWith('.tmp')) return; // editor scratch files
-      changed.set(file, isFolder);
-      clearTimeout(watchDebounceTimer);
-      watchDebounceTimer = setTimeout(() => {
-        const files = [...changed];
-        changed.clear();
-        for (const [file, isFolder] of files) {
-          send('change', {
-            type: file === manifestFile ? 'manifest' : isFolder ? 'folder' : 'file',
-            file,
-            isHtml: !isFolder && /\.html?$/i.test(file),
-            timestamp: Date.now()
-          });
-        }
-      }, 100);
-    });
-  } catch (err) {
-    console.warn(`[htmlboard] Live watcher error: ${err.message}`);
+  // A server for one command (watch: false) sees the files as they are: nothing to reload
+  if (options.watch !== false) {
+    try {
+      stopWatching = watchTree(rootDir, (file, isFolder) => {
+        if (file.endsWith('~') || file.endsWith('.tmp')) return; // editor scratch files
+        changed.set(file, isFolder);
+        clearTimeout(watchDebounceTimer);
+        watchDebounceTimer = setTimeout(() => {
+          const files = [...changed];
+          changed.clear();
+          for (const [file, isFolder] of files) {
+            send('change', {
+              type: file === manifestFile ? 'manifest' : isFolder ? 'folder' : 'file',
+              file,
+              isHtml: !isFolder && /\.html?$/i.test(file),
+              timestamp: Date.now()
+            });
+          }
+        }, 100);
+      });
+    } catch (err) {
+      console.warn(`[htmlboard] Live watcher error: ${err.message}`);
+    }
   }
 
   return {
     server,
     targetDir,
     rootDir,
-    close: () => {
+    close: async () => {
       clearTimeout(watchDebounceTimer);
       if (stopWatching) stopWatching();
       for (const id of [...requests.keys()]) endRequest(id, 503, { error: 'htmlboard stopped' });
+      await closeHeadless();
       for (const client of clients) {
         client.end();
       }
@@ -520,13 +613,16 @@ export function createServer(options = {}) {
 }
 
 /**
- * Start listening on port with auto-retry if in use
+ * Starts the server (createServer's options) on `port`, or the next free one after it (default
+ * 3000); port 0 takes any free one. `host`: the address it listens on (default: all of them);
+ * `quiet`: no word about a busy port.
  */
 export async function startServer(options = {}) {
-  const requestedPort = parseInt(options.port, 10) || 3000;
-  const actualPort = await findAvailablePort(requestedPort);
+  // Port 0: any free one, picked by the system (a canvas for one command, which nobody looks for)
+  const requestedPort = options.port === 0 ? 0 : parseInt(options.port, 10) || 3000;
+  const actualPort = requestedPort === 0 ? 0 : await findAvailablePort(requestedPort);
 
-  if (actualPort !== requestedPort) {
+  if (actualPort !== requestedPort && !options.quiet) {
     console.log(`[htmlboard] Port ${requestedPort} is in use, using ${actualPort}...`);
   }
 
@@ -534,12 +630,12 @@ export async function startServer(options = {}) {
 
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(actualPort, () => {
-      const url = `http://localhost:${actualPort}`;
+    server.listen(actualPort, options.host, () => {
+      const { port } = server.address();
       resolve({
         server,
-        port: actualPort,
-        url,
+        port,
+        url: `http://localhost:${port}`,
         targetDir,
         rootDir,
         close
