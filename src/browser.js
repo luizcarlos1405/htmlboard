@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { connectPipe } from './cdp.js';
 
 // A browser for the canvas to run in out of sight (headless), so `htmlboard check` and `shot` work
 // with no canvas open in one: an installed Chrome, Chromium or Edge, else Firefox. HTMLBOARD_BROWSER
@@ -160,8 +161,9 @@ export function removeLeftProfiles() {
 /**
  * Opens `url` in the browser, out of sight, with a profile of its own (a temporary folder, so it
  * shares nothing with the person's browser). Returns `exited` (a promise of its end, with how it
- * ended) and `close()`, which quits it and removes its profile. It quits with this process too:
- * Chromium even when this process is killed outright, as it quits once its pipe from it closes.
+ * ended), `close()`, which quits it and removes its profile, and for Chromium `cdp`, its DevTools
+ * protocol (see cdp.js; null for Firefox). It quits with this process too: Chromium even when this
+ * process is killed outright, as it quits once its pipe from it closes.
  */
 export function launchBrowser(browser, url) {
   removeLeftProfiles();
@@ -178,12 +180,10 @@ export function launchBrowser(browser, url) {
       // As root (a container, CI), Chromium won't start in its sandbox
       ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
       url];
-    stdio = ['ignore', 'ignore', 'ignore', 'pipe', 'pipe']; // the pipe: nothing is sent on it
+    stdio = ['ignore', 'ignore', 'ignore', 'pipe', 'pipe']; // the pipe: its DevTools protocol, for pictures
   }
   const child = spawn(browser.path, args, { stdio });
-  child.stdio[4]?.resume(); // what it might say there, read and dropped
-  child.stdio[3]?.on('error', () => {}); // a pipe it closed as it quit
-  child.stdio[4]?.on('error', () => {});
+  const cdp = child.stdio[3] && child.stdio[4] ? connectPipe(child.stdio[3], child.stdio[4]) : null;
   const exited = new Promise((resolve) => {
     child.once('exit', (code, signal) => resolve({ code, signal }));
     child.once('error', (error) => resolve({ error }));
@@ -199,9 +199,11 @@ export function launchBrowser(browser, url) {
   let closing = null;
   return {
     exited,
+    cdp,
     close() {
       closing ||= (async () => {
         process.off('exit', kill);
+        cdp?.close();
         const running = () => child.exitCode === null && child.signalCode === null && child.pid !== undefined;
         // Whether it quit within ms (the timer goes once it has: left running, it would keep this process up)
         const quits = (ms) => new Promise((resolve) => {

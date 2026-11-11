@@ -1,5 +1,13 @@
 // probe.js: the server puts it first in the <head> of the pages shown in frames, so it runs before
 // anything else in them.
+
+// Every file the page loads is listed, not only the first 250: a picture of it notes them all, to be
+// made again when one of them changes (see pictures.js)
+try {
+  performance.setResourceTimingBufferSize(100000);
+} catch {
+  // An older browser: the first 250
+}
 //
 // The theme the canvas shows the page in (its theme switch, check and shot --theme), which its frame
 // says: set on <html> before the page's own scripts run, so they see it (see client/theme.js).

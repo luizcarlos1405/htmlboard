@@ -1,10 +1,12 @@
 // HtmlBoard explorer: every design of the project side by side on one canvas.
 // Each design is an HTML file shown in an iframe at its real size, and the canvas pans and zooms
-// with one CSS transform. Zoomed out, a picture of each page stands in for it. Names, outlines and
-// section titles are drawn over it in screen pixels, so they stay sharp and readable at any zoom.
+// with one CSS transform. Zoomed out, a picture of each page stands in for it: the server keeps them
+// and has them made out of sight (/api/pictures), so a page only loads when it's zoomed in on. Names,
+// outlines and section titles are drawn over it in screen pixels, so they stay sharp at any zoom.
 // The server lists the designs at /api/designs and pushes saved files at /api/events.
 
 import { checkDesigns } from './check.js';
+import { makePictures } from './maker.js';
 import { drawDesign, forgetFiles } from './picture.js';
 import { shotDesign, ShotError } from './shot.js';
 import { themeFor, showTheme, themesOf, inOrder } from './theme.js';
@@ -31,7 +33,9 @@ const PICTURE_ZOOM = 0.25; // below this zoom, designs show as pictures of their
 const DRAWN_MS = 150;      // a page drawn this long has asked for its fonts and images…
 const QUIET_MS = 300;      // …and one that hasn't changed for this long has built itself,
 const BUILD_MS = 3000;     // or this long after it loaded, if it keeps changing
-const PICTURES_AT_ONCE = 3; // pictures made at the same time
+const PICTURES_AT_ONCE = 3; // pictures made at the same time (by the canvas, when no browser out of sight can)
+const KEEP_PAGES = 20;     // pages kept loaded off screen: the ones seen last
+const LOADING_AT_ONCE = 2; // pages loading at the same time, nearest the middle of the screen first
 const DEFAULT_SIZE = [1200, 800]; // a design whose entry gives no size; without a height it grows with its page
 const FIT_HEIGHT = 100;    // a frame that fits its page however short (a component's) starts this tall
 
@@ -49,7 +53,7 @@ const els = {
   version: $('version'), sectionsBar: $('sections-bar'), expandAll: $('expand-all'), collapseAll: $('collapse-all'),
   showAll: $('show-all'), hideAll: $('hide-all'), empty: $('empty'), emptyText: $('empty-text'),
   actions: $('actions'), copyImage: $('copy-image'), saveImage: $('save-image'),
-  theme: $('theme'), themeName: $('theme-name'),
+  theme: $('theme'), themeName: $('theme-name'), picturesNote: $('pictures-note'),
 };
 
 const state = {
@@ -69,6 +73,9 @@ const state = {
   theme: null,          // the theme every design shows (the theme switch), or null: each page's own
   themes: [],           // the themes the designs have: the ones they say, else the ones in their stylesheets
   themeConfig: null,    // how designs.json says themes apply, for the designs that don't say
+  // What makes the pictures: the browser the server opens out of sight ({ name, engine }), or null:
+  // the canvas itself. Undefined until the server says.
+  maker: undefined,
   // What the first view fitted ('all' or a design). Until the user moves the canvas, it is fitted
   // again when the designs' real sizes come in.
   autoFit: null,
@@ -122,7 +129,7 @@ async function fetchManifest() {
 }
 
 function build(manifest) {
-  for (const design of state.designs) if (design.pictured) URL.revokeObjectURL(design.pictured.url);
+  for (const design of state.designs) forgetPicture(design);
   els.world.replaceChildren();
   els.list.replaceChildren();
   for (const node of els.overlay.querySelectorAll('.label, .section-title')) node.remove();
@@ -188,6 +195,7 @@ function makeDesign(board, section) {
   const file = String(board.file);
   const design = {
     id: String(board.id || file),
+    key: designKeyOf(board), // its name for its pictures
     category: board.category || '',
     section,
     file,
@@ -199,14 +207,21 @@ function makeDesign(board, section) {
     autoHeight: !Number(board.height),
     x: 0,
     y: 0,
-    // Its page: how many times it loaded, when it last did and last changed, since when it's drawn
+    // Its page (loaded only when needed, see keepPages): how many times it loaded, when it last did and
+    // last changed, since when it's drawn, when it was last seen on screen zoomed in
+    iframe: null,
     loads: 0,
     loadedAt: 0,
     changedAt: 0,
     drawnSince: 0,
-    pictured: null,  // the picture it has: { url, w, h, loads, theme } (the size, load and theme it was made at)
+    seenAt: 0,
+    // The picture it has: { url, w, h, theme, scheme, scale, fresh, loads } (what it was made of, and
+    // whether its files have changed since; loads: of which load, when the canvas made it)
+    pictured: null,
     picturing: false,
-    failedAt: -1,    // the load a picture couldn't be made of
+    failedAt: -1,    // the load the canvas couldn't make a picture of
+    failed: false,   // no picture could be made of it out of sight: its page shows instead
+    exporting: false, // being copied or saved as an image: its page is drawn, under its picture
     themes: board.themes || state.themeConfig, // how its themes apply, when it or designs.json says
     found: [],       // the themes its stylesheets have, found as its page loads
   };
@@ -214,14 +229,6 @@ function makeDesign(board, section) {
     .filter(Boolean).join(' '));
   design.frame = el('div', 'frame');
   design.page = el('div', 'page');
-  design.iframe = el('iframe');
-  design.iframe.title = design.title;
-  design.iframe.tabIndex = -1;
-  design.iframe.setAttribute('scrolling', 'no');
-  showTheme(design.iframe, themeFor(design.themes, state.theme)); // its page starts in it
-  design.iframe.addEventListener('load', () => onLoad(design));
-  design.iframe.src = urlOf(file); // loads once placeFrames puts it on the canvas
-  design.page.append(design.iframe);
   design.picture = el('img', 'picture');
   design.picture.alt = '';
   design.picture.draggable = false;
@@ -251,11 +258,44 @@ function showDims(design) {
   design.itemDims.textContent = `${design.w} × ${design.h}`;
 }
 
+// A design's name for its pictures, as the server has it (pictures.js): its file, width and height
+const designKeyOf = (board) => `${board.file}|${Number(board.width) || ''}|${Number(board.height) || ''}`;
+
+// Its page, loaded in its frame, in the theme the canvas shows (see keepPages for when)
+function loadPage(design) {
+  if (design.iframe) return;
+  const iframe = el('iframe');
+  iframe.title = design.title;
+  iframe.tabIndex = -1;
+  iframe.setAttribute('scrolling', 'no');
+  showTheme(iframe, themeFor(design.themes, state.theme)); // its page starts in it
+  iframe.addEventListener('load', () => {
+    if (design.iframe === iframe) onLoad(design);
+  });
+  iframe.src = urlOf(design.file);
+  design.iframe = iframe;
+  design.loadedAt = 0;
+  design.drawnSince = 0;
+  design.page.append(iframe);
+}
+
+// Its page gone from memory: its picture shows it until it's needed again
+function unloadPage(design) {
+  if (!design.iframe) return;
+  design.iframe.remove();
+  design.iframe = null;
+  design.loads++; // a picture the canvas was making of it is of the page before
+  design.loadedAt = 0;
+  design.drawnSince = 0;
+}
+
 function onLoad(design) {
   const doc = design.iframe.contentDocument;
-  design.loads++; // its picture, if any, is of the page before
+  design.loads++; // a picture the canvas was making of it is of the page before
   design.loadedAt = design.changedAt = performance.now();
   paintFrame(design);
+  setTimeout(() => paintFrame(design), DRAWN_MS + 20); // its picture goes once it's been drawn a moment
+  keepPages(); // the next ones load
   schedulePictures();
   if (!doc) return;
   if (state.theme) showTheme(design.iframe, themeFor(design.themes, state.theme)); // again, in case its scripts set their own
@@ -287,7 +327,7 @@ function onLoad(design) {
 // page is measured once it's drawn again. Not before its fonts have come either: in the fallback
 // font its text takes more lines (qrec's notes came out 1734 px tall instead of 1594).
 function growToPage(design) {
-  const doc = design.iframe.contentDocument;
+  const doc = design.iframe?.contentDocument;
   // Its window's width, from the page: the frame's (innerWidth) would lay out the canvas too (Chrome)
   if (!doc?.documentElement || doc.documentElement.clientWidth !== design.w) return;
   if (doc.fonts && doc.fonts.status !== 'loaded') return; // measured again once they have (onLoad)
@@ -357,6 +397,7 @@ function setCategory(category, { fitAll = true } = {}) {
   applySearch();
   layout();
   if (fitAll) fit('all');
+  askPictures();
 }
 
 // The list shows what the filter and the search keep, hidden sections' designs too (faded), so they
@@ -460,20 +501,18 @@ function setHidden(fn, { reveal = true } = {}) {
   applySearch();
   layout();
   if (reveal && state.designs.some(placed) && !inSight()) fit('all');
+  askPictures();
 }
 
 // The frames of the shown sections are on the canvas. Taken off it, a frame's page unloads; put
-// back, it loads again.
+// back, its picture shows, and its page loads when it's needed (keepPages).
 function placeFrames() {
   for (const design of state.designs) {
     if (!design.section.hidden) {
       if (!design.frame.isConnected) els.world.append(design.frame);
     } else if (design.frame.isConnected) {
       design.frame.remove();
-      // Its picture shows until the page has loaded again and been pictured anew
-      design.loads++;
-      design.loadedAt = 0;
-      design.drawnSince = 0;
+      unloadPage(design);
     }
   }
 }
@@ -628,6 +667,7 @@ function paint() {
   els.zoom.textContent = `${Math.round(z * 100)}%`;
   paintMarks();
   saveView();
+  keepPages();
   schedulePictures();
 }
 
@@ -884,10 +924,30 @@ const reason = (err) => String(err?.message || err || 'unknown error');
 // The design as a PNG of its full size, at the screen's pixel density (twice the size on a Retina screen).
 async function pngOf(design) {
   const scale = clamp(Math.round(window.devicePixelRatio || 1), 1, 3);
-  const canvas = await drawDesign(design.iframe, { width: design.w, height: design.h, scale });
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-  if (!blob) throw new Error('the image is too big');
-  return { blob, width: canvas.width, height: canvas.height };
+  try {
+    await pageOf(design);
+    const canvas = await drawDesign(design.iframe, { width: design.w, height: design.h, scale });
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('the image is too big');
+    return { blob, width: canvas.width, height: canvas.height };
+  } finally {
+    design.exporting = false;
+    paint();
+  }
+}
+
+// Its page loaded and drawn (under its picture, zoomed out): it has asked for its fonts and images.
+// Off screen it isn't drawn: loaded is as far as it gets.
+async function pageOf(design) {
+  design.exporting = true;
+  keepPages();
+  loadPage(design); // now, even while others load
+  paintFrame(design);
+  const start = performance.now();
+  while (!pageReady(design) && !(design.away && design.loadedAt) && performance.now() - start < 15000) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    paintFrame(design);
+  }
 }
 
 function exportStarts(design) {
@@ -1014,20 +1074,39 @@ function download(blob, name) {
 
 // ---------------------------------------------------------------- pictures when zoomed out
 
-// Zoomed out, a design shows a picture of its page, and the page under it isn't drawn: a canvas of
-// many designs stays light, and their animations stop until it's zoomed in again. Pictures are made
-// a few at a time while the canvas rests, nearest the middle of the screen first, of pages that have
-// been drawn (a page loads its fonts and images as it's drawn) and have built themselves. Until a
-// design has a picture, and while its picture is out of date (its page reloaded, or resized), its
-// page is drawn, under the old picture if it has one.
+// Zoomed out, a design shows a picture of its page, and its page isn't loaded at all: a canvas of
+// many designs stays light, and their animations stop until it's zoomed in again. The server keeps
+// the pictures between visits and has them made out of sight (in the browser it opens), nearest the
+// middle of the screen first; until a design has one, its frame is empty, and a design whose files
+// changed keeps its old one until the new one comes. Zoomed in, the pages on screen load, a few at a
+// time, each one's picture over it until it has loaded, and the KEEP_PAGES seen last stay loaded.
+//
+// With no browser to make them out of sight (state.maker null), the canvas makes them itself, a few
+// at a time while it rests, of pages that have been drawn (a page loads its fonts and images as it's
+// drawn) and have built themselves, and sends them to the server to keep. Until such a design has a
+// picture, and while its picture is out of date, its page loads and is drawn zoomed out too.
 
-// What a design shows: its page, or zoomed out, its picture over it
+// The pictures the canvas shows: in its theme, its system's mode and a scale sharp up to PICTURE_ZOOM
+// at the screen's pixel density (twice on a Retina screen)
+const darkMode = matchMedia('(prefers-color-scheme: dark)');
+const pictureAsk = () => ({
+  theme: state.theme || '',
+  scheme: darkMode.matches ? 'dark' : 'light',
+  scale: Math.round(PICTURE_ZOOM * clamp(window.devicePixelRatio || 1, 1, 2) * 1000) / 1000,
+});
+
+// What a design shows: its picture, zoomed out and while its page isn't ready, else its page
 function paintFrame(design) {
-  const picture = state.pictures && Boolean(design.pictured);
-  const still = picture && isFresh(design); // the page under it isn't drawn
+  const ready = pageReady(design);
+  const live = ready && (!state.pictures || design.failed);
+  const picture = Boolean(design.pictured) && !live;
+  // Zoomed out, its page isn't drawn, unless the canvas makes its pictures and this one is out of
+  // date, no picture could be made of it out of sight, or it's being copied as an image
+  const drawPage = Boolean(design.iframe)
+    && (!state.pictures || design.exporting || design.failed || (state.maker === null && !isFresh(design)));
   design.frame.classList.toggle('is-picture', picture);
-  design.frame.classList.toggle('is-still', still);
-  const drawn = placed(design) && design.frame.isConnected && !design.away && !still;
+  design.frame.classList.toggle('is-still', !drawPage);
+  const drawn = drawPage && placed(design) && design.frame.isConnected && !design.away;
   if (!drawn) {
     design.drawnSince = 0;
   } else if (!design.drawnSince) {
@@ -1035,21 +1114,197 @@ function paintFrame(design) {
     // Measured on its way back: while it wasn't drawn, its page may have gone unmeasured (see
     // growToPage), or come out a few px off
     if (design.loadedAt && design.autoHeight) requestAnimationFrame(() => growToPage(design));
+    if (design.loadedAt) setTimeout(() => paintFrame(design), DRAWN_MS + 20); // its picture goes then
   }
 }
 
-// Whether a design's picture shows its page as it is: made of this load, at this size
+// Its page has loaded and been drawn a moment (it has asked for its fonts and images): it can show
+function pageReady(design) {
+  return Boolean(design.iframe) && design.loadedAt > 0 && design.drawnSince > 0
+    && performance.now() - Math.max(design.loadedAt, design.drawnSince) >= DRAWN_MS;
+}
+
+// Whether a design's picture shows its page as it is: at its size, in the theme, mode and scale the
+// canvas shows, of files that haven't changed since (the server says), and when the canvas made it,
+// of the page as it's loaded now
 function isFresh(design) {
   const { pictured } = design;
-  return Boolean(pictured) && pictured.loads === design.loads && pictured.w === design.w && pictured.h === design.h
-    && pictured.theme === state.theme;
+  if (!pictured?.fresh) return false;
+  const ask = pictureAsk();
+  return pictured.w === design.w && pictured.h === design.h && pictured.theme === ask.theme && pictured.scheme === ask.scheme
+    && pictured.scale === ask.scale && (pictured.loads === undefined || !design.iframe || pictured.loads === design.loads);
 }
+
+// Whether a design needs its page loaded: on screen zoomed in; zoomed out, being copied as an image,
+// or with no picture out of sight (it couldn't be made, or the canvas makes them and this one is out of date)
+function needsPage(design) {
+  if (!placed(design) || !design.frame.isConnected) return false;
+  if (design.exporting) return true;
+  if (design.away) return false;
+  if (!state.pictures || design.failed) return true;
+  return state.maker === null && !isFresh(design);
+}
+
+// How far a design is from the middle of the screen, in screen px (screen: size())
+function distanceOf(design, screen) {
+  const { x, y, z } = state.view;
+  return Math.hypot(x + (design.x + design.w / 2) * z - screen.w / 2, y + (design.y + design.h / 2) * z - screen.h / 2);
+}
+
+const nearestFirst = (designs) => {
+  const screen = size();
+  return designs.map((design) => [distanceOf(design, screen), design]).sort((a, b) => a[0] - b[0]).map(([, design]) => design);
+};
+
+// The pages the canvas needs load, a few at once, nearest the middle of the screen first; of the
+// others, the KEEP_PAGES seen last stay loaded and the rest unload. Once the canvas has stopped.
+function keepPages() {
+  if (moving || state.maker === undefined) return;
+  const now = performance.now();
+  const missing = [];
+  for (const design of state.designs) {
+    if (!needsPage(design)) continue;
+    design.seenAt = now;
+    if (!design.iframe) missing.push(design);
+  }
+  const loading = state.designs.filter((design) => design.iframe && !design.loadedAt).length;
+  for (const design of nearestFirst(missing).slice(0, Math.max(0, LOADING_AT_ONCE - loading))) {
+    loadPage(design);
+    paintFrame(design);
+  }
+  const others = state.designs.filter((design) => design.iframe && !needsPage(design)).sort((a, b) => b.seenAt - a.seenAt);
+  for (const design of others.slice(KEEP_PAGES)) {
+    unloadPage(design);
+    paintFrame(design);
+  }
+}
+
+// ---------------------------------------------------------------- pictures from the server
+
+let asked = null; // the last ask, to tell an answer that came too late
+// The pictures the server keeps for the designs as the canvas shows them now; then the ones missing
+// or out of date are made out of sight, nearest the middle of the screen first (or by the canvas).
+async function askPictures() {
+  if (WORKER) return;
+  const ask = pictureAsk();
+  const key = JSON.stringify(ask);
+  asked = key;
+  let list;
+  try {
+    const res = await fetch(`/api/pictures?${new URLSearchParams(ask)}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    list = await res.json();
+  } catch {
+    list = { maker: null, pictures: {} }; // a server that can't keep them: the canvas makes them
+  }
+  if (asked !== key) return; // the theme or mode changed meanwhile: asked again
+  state.maker = list.maker || null;
+  for (const design of state.designs) {
+    const kept = list.pictures?.[design.key];
+    if (kept) showPicture(design, { ...kept, ...ask });
+    else if (design.pictured && !design.pictured.url.startsWith('blob:')) design.pictured.fresh = false;
+  }
+  showProgress(list.progress || { done: 0, total: 0 });
+  if (!state.maker) {
+    paint(); // the pages it makes pictures of load
+    return;
+  }
+  const wanted = nearestFirst(state.designs.filter((design) => placed(design) && !isFresh(design) && !design.failed)).map((design) => design.key);
+  paint();
+  if (!wanted.length) return;
+  try {
+    const res = await fetch('/api/pictures/wanted', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...ask, designs: [...new Set(wanted)] }) });
+    if (!(await res.json()).maker) {
+      state.maker = null;
+      paint();
+    }
+  } catch {
+    // The server is gone: asked again when it's back
+  }
+}
+
+// A picture of a design, as the server keeps it: shown once it has decoded, so there's no flash
+// between the one before and it. Its height is the design's until its page loads, for a design that
+// grows with its page, and the themes its stylesheets have are the design's.
+function showPicture(design, { url, height, themes, fresh, theme, scheme, scale }) {
+  if (design.pictured?.url === url) {
+    design.pictured.fresh = fresh;
+    paintFrame(design);
+    return;
+  }
+  const token = (design.pictureToken = (design.pictureToken || 0) + 1);
+  const image = new Image();
+  image.src = url;
+  image.decode().catch(() => {}).then(() => {
+    if (design.pictureToken !== token || !state.designs.includes(design)) return; // another came, or the canvas was rebuilt
+    forgetPicture(design);
+    if (design.autoHeight && !design.iframe && height > 0 && height !== design.h) {
+      design.h = height;
+      showDims(design);
+      layout();
+    }
+    design.pictured = { url, w: design.w, h: height || design.h, theme, scheme, scale, fresh };
+    design.picture.src = url;
+    design.failed = false;
+    if (themes?.length && !design.themes?.values?.length && !design.found.length) {
+      design.found = themes;
+      updateThemes();
+    }
+    paintFrame(design);
+    keepPages(); // a page kept to be pictured may go
+  });
+}
+
+// A picture the canvas made: its blob URL goes with it
+function forgetPicture(design) {
+  if (design.pictured?.url.startsWith('blob:')) URL.revokeObjectURL(design.pictured.url);
+}
+
+// The toolbar says how far the pictures made out of sight have got, until they're all made
+function showProgress({ done = 0, total = 0 }) {
+  const making = total > 0 && done < total;
+  els.picturesNote.hidden = !making;
+  if (making) els.picturesNote.textContent = `Pictures ${done} of ${total}`;
+}
+
+// A picture the canvas made, sent to the server to keep, with the files its page used
+async function keepPicture(design, blob, ask) {
+  const win = design.iframe?.contentWindow;
+  const files = [];
+  try {
+    for (const entry of win.performance.getEntriesByType('resource')) {
+      const url = new URL(entry.name);
+      if (url.origin === location.origin) files.push(url.href);
+    }
+  } catch {
+    // Can't tell: its own file only
+  }
+  await fetch('/api/pictures', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      design: design.key, ...ask, height: design.h, themes: design.found, files,
+      since: Math.floor(win?.performance.timeOrigin || 0), type: blob.type, image: await base64(blob),
+    }),
+  });
+}
+
+function base64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).slice(String(reader.result).indexOf(',') + 1));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ---------------------------------------------------------------- pictures made by the canvas
 
 let picturing = 0; // pictures being made
 let pictureTimer = 0;
 function schedulePictures() {
   clearTimeout(pictureTimer);
-  if (moving) return; // carries on when the canvas stops
+  if (moving || state.maker !== null) return; // carries on when the canvas stops; made out of sight
   while (picturing < PICTURES_AT_ONCE) {
     const { design, wait } = nextPicture();
     if (!design) {
@@ -1076,7 +1331,7 @@ function nextPicture() {
   let nearest = Infinity;
   let wait = Infinity;
   for (const design of state.designs) {
-    if (design.picturing || !design.drawnSince || !design.loadedAt || isFresh(design) || design.failedAt === design.loads) continue;
+    if (design.picturing || !design.iframe || !design.drawnSince || !design.loadedAt || isFresh(design) || design.failedAt === design.loads) continue;
     if (design.iframe.contentDocument?.readyState !== 'complete') continue;
     const ready = Math.max(design.drawnSince + DRAWN_MS, Math.min(design.changedAt + QUIET_MS, design.loadedAt + BUILD_MS));
     if (ready > now) {
@@ -1094,13 +1349,13 @@ function nextPicture() {
 
 // Sharp up to PICTURE_ZOOM, at the screen's pixel density (twice on a Retina screen)
 async function takePicture(design) {
-  const { loads, w, h } = design;
-  const { theme } = state;
-  const scale = PICTURE_ZOOM * clamp(window.devicePixelRatio || 1, 1, 2);
+  const { loads, w, h, iframe } = design;
+  const ask = pictureAsk();
   let url = '';
+  let blob = null;
   try {
-    const canvas = await drawDesign(design.iframe, { width: w, height: h, scale });
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
+    const canvas = await drawDesign(iframe, { width: w, height: h, scale: ask.scale });
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
     canvas.width = 0; // its pixels can go
     if (!blob) throw new Error('no picture');
     url = URL.createObjectURL(blob);
@@ -1112,15 +1367,20 @@ async function takePicture(design) {
     if (design.loads === loads) design.failedAt = loads; // its page stays drawn, until it loads again
     return;
   }
-  // Its page reloaded, or the design changed size or theme, while it was made (or the canvas was rebuilt)
-  if (design.loads !== loads || design.w !== w || design.h !== h || state.theme !== theme || !state.designs.includes(design)) {
+  // Its page reloaded or unloaded, or the design changed size or theme, while it was made (or the
+  // canvas was rebuilt)
+  if (design.loads !== loads || design.iframe !== iframe || design.w !== w || design.h !== h
+    || JSON.stringify(pictureAsk()) !== JSON.stringify(ask) || !state.designs.includes(design)) {
     URL.revokeObjectURL(url);
     return;
   }
-  if (design.pictured) URL.revokeObjectURL(design.pictured.url);
-  design.pictured = { url, w, h, loads, theme };
+  forgetPicture(design);
+  design.pictureToken = (design.pictureToken || 0) + 1; // a picture the server had coming is older
+  design.pictured = { url, w, h, loads, ...ask, fresh: true };
   design.picture.src = url;
   paintFrame(design);
+  keepPages(); // its page may go
+  keepPicture(design, blob, ask).catch(() => {}); // kept for the next visit
 }
 
 // ---------------------------------------------------------------- themes
@@ -1151,12 +1411,14 @@ function setTheme(value) {
   writeStore('theme', value);
   forgetFiles(); // pictures read the stylesheets again, in this theme
   for (const design of state.designs) {
+    if (!design.iframe) continue; // it starts in it when it loads
     showTheme(design.iframe, themeFor(design.themes, value));
     // Back to its own: its page loads again without the theme (one still loading has it from the probe)
     if (!value && before && design.frame.isConnected) reloadFrame(design);
   }
   paintThemeButton();
-  paint(); // the pictures shown zoomed out are of the theme before
+  paint();
+  askPictures(); // the ones shown zoomed out are of the theme before, until the new ones come
   toast(value ? `Every design in ${value}` : 'Each design in its own theme');
 }
 
@@ -1208,6 +1470,7 @@ function names(designs) {
 // ---------------------------------------------------------------- reloading
 
 function reloadFrame(design) {
+  if (!design.iframe) return; // not loaded: it loads as it is now when it's needed
   try {
     design.iframe.contentWindow.location.reload();
   } catch {
@@ -1217,6 +1480,7 @@ function reloadFrame(design) {
 
 // Whether a design's page loaded the file: its stylesheets, scripts, images, fonts, fetches.
 function uses(design, path) {
+  if (!design.iframe) return false; // its picture is made again if it's out of date (askPictures)
   let entries;
   try {
     entries = design.iframe.contentWindow.performance.getEntriesByType('resource');
@@ -1239,6 +1503,7 @@ function rebuild(manifest) {
   build(manifest);
   const design = state.designs.find((d) => d.id === selected);
   select(design && placed(design) ? design : null);
+  askPictures();
 }
 
 // What a new canvas changed, from the designs before and after it.
@@ -1272,7 +1537,7 @@ function patch(manifest) {
     const design = state.designs[i];
     design.title = board.title || design.file;
     design.label.textContent = design.title;
-    design.iframe.title = design.title;
+    if (design.iframe) design.iframe.title = design.title;
     design.item.querySelector('.name').textContent = design.title;
     if (board.description) design.item.title = board.description;
     else design.item.removeAttribute('title');
@@ -1286,6 +1551,7 @@ function patch(manifest) {
     design.w = width;
     if (!autoHeight) design.h = Number(board.height);
     design.autoHeight = autoHeight;
+    design.key = designKeyOf(board);
     showDims(design);
   });
   state.manifest = JSON.stringify(manifest);
@@ -1295,6 +1561,7 @@ function patch(manifest) {
   updateThemes();
   layout();
   remeasure.forEach(growToPage);
+  askPictures(); // a design of another size has other pictures
 }
 
 // Reads the designs again: 'rebuilt' (a new canvas), 'patched' (names or sizes) or false (no change).
@@ -1327,7 +1594,10 @@ async function reloadAll() {
   }
   forgetFiles();
   if (JSON.stringify(manifest) !== state.manifest) rebuild(manifest);
-  else state.designs.filter((d) => d.frame.isConnected).forEach(reloadFrame);
+  else {
+    state.designs.filter((d) => d.frame.isConnected).forEach(reloadFrame);
+    askPictures(); // files may have changed while the server was gone
+  }
   toast('Designs reloaded');
 }
 
@@ -1364,9 +1634,12 @@ async function applyChanges() {
     if (await rebuildIfChanged() === 'rebuilt') return;
   }
 
-  // A hidden section's designs aren't loaded: they load as they are now when it is shown.
+  // A hidden section's designs, and the pages not loaded, load as they are now when they're needed;
+  // the pictures of the ones that used the files are made again (the server knows which).
   const paths = files.map((file) => `/${file}`);
-  const frames = state.designs.filter((d) => d.frame.isConnected && (paths.includes(d.path) || paths.some((path) => uses(d, path))));
+  const frames = state.designs.filter((d) => d.iframe && d.frame.isConnected && (paths.includes(d.path) || paths.some((path) => uses(d, path))));
+  for (const design of frames) if (design.pictured) design.pictured.fresh = false;
+  askPictures();
   if (!frames.length) return;
   // Name the shared files the designs use (a stylesheet, a script), not whatever else was saved.
   // Asked before reloading: a reloading page forgets what it loaded.
@@ -1394,6 +1667,39 @@ function connect() {
     } catch {
       // Not ours.
     }
+  });
+  // Pictures made out of sight, as the server keeps them; how far they've got
+  source.addEventListener('picture', (event) => {
+    let picture;
+    try {
+      picture = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const ask = pictureAsk();
+    if (picture.theme !== ask.theme || picture.scheme !== ask.scheme || picture.scale !== ask.scale) return; // another canvas's
+    for (const design of state.designs) {
+      if (design.key !== picture.design) continue;
+      if (picture.failed) {
+        design.failed = true; // its page shows instead
+        paint();
+      } else {
+        showPicture(design, { ...picture, theme: ask.theme, scheme: ask.scheme, scale: ask.scale });
+      }
+    }
+  });
+  source.addEventListener('pictures', (event) => {
+    let progress;
+    try {
+      progress = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (progress.maker === false && state.maker) {
+      state.maker = null; // no browser could make them: the canvas does
+      paint();
+    }
+    showProgress(progress);
   });
   listenForRequests(source);
   // EventSource keeps trying to reconnect by itself.
@@ -1782,7 +2088,10 @@ function wire() {
 async function start() {
   if (WORKER) {
     document.title = 'htmlboard (out of sight)';
-    listenForRequests(new EventSource('/api/events')); // and it reconnects by itself
+    document.documentElement.classList.add('is-worker');
+    const params = new URLSearchParams(location.search);
+    if (!params.has('only')) listenForRequests(new EventSource('/api/events')); // and it reconnects by itself
+    if (params.has('maker')) makePictures({ maker: Number(params.get('maker')) || 0, engine: params.get('engine') || 'chromium' });
     return;
   }
   let manifest;
@@ -1824,6 +2133,8 @@ async function start() {
   }
 
   connect();
+  askPictures();
+  darkMode.addEventListener('change', () => askPictures()); // pages that follow the system's mode look otherwise
 }
 
 start();

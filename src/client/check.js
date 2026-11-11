@@ -41,17 +41,17 @@ export function hiddenBox() {
  * its window and document (none when there's no page to see), and whether it finished loading in
  * time. With `grow`, a design without a height of its own gets a frame as tall as its page, as the
  * canvas shows it. `theme`: the theme to show it in (see theme.js); without one, the page's own, in
- * the system's light mode (the same whatever the person's computer is set to). The caller removes
- * the frame.
+ * the system's light mode (the same whatever the person's computer is set to), or the one `own` says
+ * (a picture for a canvas on a computer set to dark). The caller removes the frame.
  *
  * @param {{ file: string, width: number, height?: number, frameHeight: number }} design
  */
-export async function openDesign(design, box, { grow = false, theme = null } = {}) {
+export async function openDesign(design, box, { grow = false, theme = null, own = 'light' } = {}) {
   const frame = document.createElement('iframe');
   frame.name = 'htmlboard-check'; // the probe listens in these frames only
   frame.setAttribute('scrolling', 'no');
   frame.style.cssText = `position: absolute; left: 0; top: 0; border: 0; width: ${design.width}px; height: ${design.frameHeight}px;`;
-  showTheme(frame, theme, { own: 'light' });
+  showTheme(frame, theme, { own });
   const loaded = new Promise((resolve) => frame.addEventListener('load', () => resolve(true), { once: true }));
   frame.src = encodeURI(`/${design.file}`);
   box.append(frame);

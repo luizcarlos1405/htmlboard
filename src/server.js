@@ -1,5 +1,6 @@
 import http from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { loadDesignsManifest } from './designs.js';
 import { componentPreview } from './components.js';
 import { findBrowser, launchBrowser } from './browser.js';
+import { openPictures, pictureQueue, pictureKey, designKey, pictureParams, IMAGE_TYPES } from './pictures.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,11 +86,31 @@ const ANSWER_LIMIT = 256 * 1024 * 1024;
 /** How long a browser opened out of sight has to open the canvas, and stays open without requests */
 const HEADLESS_OPEN_MS = 30000;
 const HEADLESS_IDLE_MS = 60000;
+/** How long a page making pictures out of sight waits to be given one, before it asks again */
+const PICTURE_WAIT_MS = 20000;
+/** Pictures made at once out of sight: tabs of Chromium (Firefox makes as many in its one page) */
+const PICTURE_MAKERS = Math.max(1, Math.min(4, (os.availableParallelism?.() ?? os.cpus().length) - 1));
+/** The most a picture sent to be kept can weigh, as base64 */
+const PICTURE_LIMIT = 32 * 1024 * 1024;
+/** The browser out of sight quitting by itself while making pictures is opened again this many times in a row */
+const PICTURE_RESTARTS = 2;
+/** A browser that couldn't be opened to make pictures is tried again after this long */
+const PICTURE_RETRY_MS = 10 * 60 * 1000;
 
 /** True when target is base itself or inside it */
 function isInside(base, target) {
   const rel = path.relative(base, target);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/** Which maker a page out of sight is (its ?maker=), or -1 */
+function makerOf(url) {
+  try {
+    const params = new URL(url).searchParams;
+    return params.has('worker') && params.has('maker') ? Number(params.get('maker')) : -1;
+  } catch {
+    return -1;
+  }
 }
 
 /** True when there is a file (not a folder) at filePath */
@@ -340,19 +362,27 @@ export function createServer(options = {}) {
     idleMs: options.headlessIdleMs ?? HEADLESS_IDLE_MS
   };
 
+  // What options.browser or findBrowser() gives, looked up once
+  function browserFound() {
+    if (headless.browser === undefined) headless.browser = options.browser !== undefined ? options.browser : findBrowser();
+    return headless.browser;
+  }
+
   function openHeadless() {
     headless.opening ||= (async () => {
-      if (headless.browser === undefined) headless.browser = options.browser !== undefined ? options.browser : findBrowser();
-      const { browser } = headless;
+      const browser = browserFound();
       if (!browser) {
         throw Object.assign(new Error("The canvas isn't open in a browser, and there's no browser to open it in out of sight"), { browser: false });
       }
-      const running = launchBrowser(browser, `http://127.0.0.1:${server.address().port}/?worker`);
+      // Its first page also makes pictures (maker 0), as Chromium's other tabs do (see makePictures)
+      const running = launchBrowser(browser, `http://127.0.0.1:${server.address().port}/?worker&maker=0&engine=${browser.engine}`);
       headless.running = running;
       running.exited.then(() => {
         if (headless.running !== running) return;
         headless.running = null; // quit by itself (a crash): its profile goes, and the next request opens another
         running.close();
+        stopMakers();
+        if (!pictures.queue.idle() && pictures.restarts++ < PICTURE_RESTARTS) makePictures();
       });
       let timer;
       try {
@@ -378,17 +408,258 @@ export function createServer(options = {}) {
     return headless.opening;
   }
 
-  // Quits it after a while without requests
+  // Quits it after a while without requests, and with no pictures to make
   function idleHeadless() {
     clearTimeout(headless.idle);
-    if (headless.running && !requests.size && !headless.opening) headless.idle = setTimeout(closeHeadless, headless.idleMs);
+    if (headless.running && !requests.size && !headless.opening && pictures.queue.idle()) headless.idle = setTimeout(closeHeadless, headless.idleMs);
   }
 
   function closeHeadless() {
     clearTimeout(headless.idle);
     const { running } = headless;
     headless.running = null;
+    stopMakers();
     return running ? running.close() : Promise.resolve();
+  }
+
+  // Pictures of the designs, kept in the designs folder's .htmlboard/ (see pictures.js). The browser
+  // out of sight makes them while a canvas asks for them, a few at once, so the canvas has nothing to
+  // do but show them: Chromium takes screenshots of the pages (in PICTURE_MAKERS tabs), Firefox draws
+  // them as the canvas would. With no browser, the canvas makes them itself and sends them to keep.
+  const pictures = {
+    store: null,
+    queue: pictureQueue({ onChange: (progress) => progressOfPictures(progress) }),
+    sessions: new Map(), // maker → its DevTools session (a promise), Chromium's tabs
+    tabs: false, // Chromium's other tabs are open
+    restarts: 0,
+    failedAt: 0, // the browser couldn't be opened to make them: the canvases make them for a while
+    progress: null,
+    progressTimer: null,
+  };
+  const pictureStore = () => (pictures.store ||= openPictures(targetDir, rootDir));
+  const describePicture = (picture) => ({ url: `/__pictures/${picture.image}`, height: picture.height, themes: picture.themes, fresh: picture.fresh });
+
+  // The canvases hear how far the pictures have got (the toolbar says so), a few times a second at most
+  function progressOfPictures(progress) {
+    pictures.progress = progress;
+    if (progress.done === progress.total) idleHeadless();
+    if (pictures.progressTimer) return;
+    pictures.progressTimer = setTimeout(() => {
+      pictures.progressTimer = null;
+      send('pictures', pictures.progress);
+    }, 150);
+  }
+
+  // The browser out of sight quit: what its pages were making waits for the next one
+  function stopMakers() {
+    pictures.sessions.clear();
+    pictures.tabs = false;
+    pictures.queue.stopAll();
+  }
+
+  // The browser that makes the pictures out of sight, unless it couldn't be opened lately
+  function pictureMaker() {
+    const browser = browserFound();
+    return browser && !(pictures.failedAt && Date.now() - pictures.failedAt < PICTURE_RETRY_MS) ? browser : null;
+  }
+
+  /** The pictures kept for the canvas's designs, in a theme, system mode and scale (see pictureParams) */
+  function listPictures(asked) {
+    const designs = canvasDesigns();
+    const store = pictureStore();
+    const shown = new Set(designs.map(designKey));
+    store.prune((key) => shown.has(key));
+    const found = store.find(designs.map((design) => pictureKey(design, asked)));
+    const list = {};
+    for (const design of designs) {
+      const picture = found.get(pictureKey(design, asked));
+      if (picture) list[designKey(design)] = describePicture(picture);
+    }
+    const browser = pictureMaker();
+    return { maker: browser ? { name: browser.name, engine: browser.engine } : null, pictures: list, progress: pictures.queue.progress() };
+  }
+
+  /**
+   * The canvas wants pictures of these designs (`designs`: their keys, the first first) in a theme,
+   * system mode and scale: the ones not kept, or out of date, are made out of sight. Without a browser
+   * to make them, `maker` is false and the canvas makes them itself.
+   */
+  function wantPictures(body) {
+    if (!pictureMaker()) return { maker: false, queued: 0 };
+    const asked = pictureParams(body);
+    const byKey = new Map(canvasDesigns().map((design) => [designKey(design), design]));
+    const designs = (Array.isArray(body.designs) ? body.designs : []).map((key) => byKey.get(String(key))).filter(Boolean);
+    const found = pictureStore().find(designs.map((design) => pictureKey(design, asked)));
+    const jobs = designs.filter((design) => !found.get(pictureKey(design, asked))?.fresh)
+      .map((design) => ({ key: pictureKey(design, asked), design, ...asked }));
+    const queued = pictures.queue.want(jobs);
+    makePictures();
+    return { maker: true, queued };
+  }
+
+  // Makes the pictures waiting: the browser out of sight opened if it isn't, with Chromium's other tabs
+  function makePictures() {
+    if (pictures.queue.idle()) return;
+    clearTimeout(headless.idle);
+    (async () => {
+      if (!headless.running) await openHeadless();
+      const running = headless.running;
+      if (running?.cdp && !pictures.tabs) {
+        pictures.tabs = true;
+        const origin = `http://127.0.0.1:${server.address().port}`;
+        for (let maker = 1; maker < PICTURE_MAKERS; maker++) {
+          // Each in its own window: a tab behind another isn't drawn, and its pictures would wait forever
+          await running.cdp.send('Target.createTarget', { url: `${origin}/?worker&maker=${maker}&engine=chromium&only=pictures`, newWindow: true }).catch(() => {});
+        }
+      }
+    })().catch((error) => {
+      // No browser can make them: the canvases make them themselves, for a while
+      pictures.failedAt = Date.now();
+      pictures.queue.clear();
+      send('pictures', { done: 0, total: 0, maker: false, error: String(error?.message || error) });
+    });
+  }
+
+  // A page out of sight asks for a picture to make: given one as soon as there is one
+  async function givePicture(res) {
+    const stop = new AbortController();
+    res.on('close', () => stop.abort());
+    const job = await pictures.queue.next(PICTURE_WAIT_MS, stop.signal);
+    if (!job) {
+      if (!res.destroyed) res.writeHead(204).end();
+      return;
+    }
+    if (res.destroyed) {
+      pictures.queue.giveBack(job);
+      return;
+    }
+    pictures.restarts = 0;
+    const { id, design, theme, scheme, scale } = job;
+    json(res, 200, { id, design, theme, scheme, scale });
+  }
+
+  /** The files a page used (`urls`, as it loaded them), from the root, with the design's own */
+  function filesOf(urls, file) {
+    const files = new Set([String(file).split('?')[0]]);
+    for (const url of Array.isArray(urls) ? urls : []) {
+      let pathname;
+      try {
+        pathname = decodeURIComponent(new URL(String(url), 'http://localhost').pathname);
+      } catch {
+        continue;
+      }
+      const rel = pathname.replace(/^\/+/, '');
+      if (!rel || /^(__explorer|__pictures|api)\//.test(rel) || !isInside(rootDir, path.join(rootDir, rel))) continue;
+      files.add(rel);
+    }
+    return [...files];
+  }
+
+  /** Keeps a picture made of a job, and tells the canvases */
+  function keepMade(job, report, image, type) {
+    const picture = pictureStore().put(job.key, {
+      height: report.height,
+      themes: Array.isArray(report.themes) ? report.themes : [],
+      files: filesOf(report.files, job.design.file),
+      since: job.startedAt,
+    }, image, type);
+    pictures.queue.done(job.id, true, { fresh: picture.fresh });
+    send('picture', { design: designKey(job.design), theme: job.theme, scheme: job.scheme, scale: job.scale, ...describePicture(picture) });
+  }
+
+  // A picture that couldn't be made: tried again, or given up on, and then the canvases show its page
+  function pictureFailed(job, error) {
+    const given = pictures.queue.done(job.id, false);
+    if (given?.gaveUp) {
+      send('picture', { design: designKey(job.design), theme: job.theme, scheme: job.scheme, scale: job.scale, failed: true, error: String(error?.message || error || 'unknown') });
+    }
+  }
+
+  // Chromium's screenshot of the frame a maker (one of its tabs) has its design in, at the top left
+  async function shoot(maker, job, report) {
+    const cdp = headless.running?.cdp;
+    if (!cdp) throw new Error('the browser out of sight has no DevTools pipe');
+    if (!pictures.sessions.has(maker)) {
+      const attaching = (async () => {
+        const { targetInfos } = await cdp.send('Target.getTargets');
+        const tab = targetInfos.find((info) => info.type === 'page' && makerOf(info.url) === maker);
+        if (!tab) throw new Error(`no tab makes pictures as maker ${maker}`);
+        return (await cdp.send('Target.attachToTarget', { targetId: tab.targetId, flatten: true })).sessionId;
+      })();
+      attaching.catch(() => pictures.sessions.delete(maker));
+      pictures.sessions.set(maker, attaching);
+    }
+    const sessionId = await pictures.sessions.get(maker);
+    const width = Math.max(1, Math.ceil(Number(report.width) || 1));
+    const height = Math.max(1, Math.ceil(Number(report.height) || 1));
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
+    const { data } = await cdp.send('Page.captureScreenshot', {
+      format: 'webp', quality: 90, clip: { x: 0, y: 0, width, height, scale: job.scale }, fromSurface: true,
+    }, sessionId);
+    return Buffer.from(data, 'base64');
+  }
+
+  const readJson = async (req, limit) => {
+    const value = JSON.parse(await readBody(req, limit));
+    if (!value || typeof value !== 'object') throw new Error('Not JSON');
+    return value;
+  };
+
+  // A maker's page is ready: its picture is taken (Chromium), or comes with it (Firefox, a canvas)
+  async function takePicture(req, res, params) {
+    let report;
+    try {
+      report = await readJson(req, PICTURE_LIMIT);
+    } catch {
+      json(res, 400, { error: 'Not a picture' });
+      return;
+    }
+    const job = report.job ? pictures.queue.job(report.job) : null;
+    if (params.has('shoot')) {
+      if (!job) {
+        json(res, 404, { error: 'No such picture to make' });
+        return;
+      }
+      try {
+        keepMade(job, report, await shoot(Number(params.get('maker')) || 0, job, report), 'image/webp');
+      } catch (error) {
+        pictureFailed(job, error);
+        json(res, 500, { error: String(error?.message || error) });
+        return;
+      }
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (report.failed) {
+      if (job) pictureFailed(job, report.failed);
+      res.writeHead(204).end();
+      return;
+    }
+    const type = Object.hasOwn(IMAGE_TYPES, report.type) ? report.type : null;
+    const image = typeof report.image === 'string' ? Buffer.from(report.image, 'base64') : null;
+    if (!type || !image?.length) {
+      json(res, 400, { error: 'Not a picture' });
+      return;
+    }
+    if (job) {
+      keepMade(job, report, image, type);
+    } else {
+      // Made by a canvas, of a page it shows (no browser out of sight)
+      const asked = pictureParams(report);
+      const design = canvasDesigns().find((each) => designKey(each) === String(report.design));
+      if (!design) {
+        json(res, 404, { error: 'No such design on the canvas' });
+        return;
+      }
+      const picture = pictureStore().put(pictureKey(design, asked), {
+        height: report.height,
+        themes: Array.isArray(report.themes) ? report.themes : [],
+        files: filesOf(report.files, design.file),
+        since: Number(report.since) || 0,
+      }, image, type);
+      send('picture', { design: designKey(design), ...asked, ...describePicture(picture) });
+    }
+    res.writeHead(204).end();
   }
 
   /**
@@ -475,6 +746,41 @@ export function createServer(options = {}) {
     if (answering && req.method === 'POST') {
       if (answering[2]) claimRequest(answering[1], res, { headless: parsedUrl.searchParams.has('headless') });
       else finishRequest(answering[1], req, res).catch(() => json(res, 500, { error: "Couldn't take the answer" }));
+      return;
+    }
+
+    // API: pictures of the designs, kept and made out of sight (see pictures.js)
+    if (pathname === '/api/pictures' && req.method === 'GET') {
+      try {
+        json(res, 200, listPictures(pictureParams(Object.fromEntries(parsedUrl.searchParams))));
+      } catch (error) {
+        json(res, 500, { error: String(error?.message || error) });
+      }
+      return;
+    }
+    if (pathname === '/api/pictures/wanted' && req.method === 'POST') {
+      readJson(req).then((body) => json(res, 200, wantPictures(body)), () => json(res, 400, { error: 'Say which pictures (JSON)' }))
+        .catch((error) => json(res, 500, { error: String(error?.message || error) }));
+      return;
+    }
+    if (pathname === '/api/pictures/next' && req.method === 'POST') {
+      givePicture(res).catch(() => json(res, 500, { error: "Couldn't give a picture to make" }));
+      return;
+    }
+    if (pathname === '/api/pictures' && req.method === 'POST') {
+      takePicture(req, res, parsedUrl.searchParams).catch((error) => json(res, 500, { error: String(error?.message || error) }));
+      return;
+    }
+    if (pathname.startsWith('/__pictures/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const file = pictureStore().imageFile(pathname.slice('/__pictures/'.length));
+      if (!file || !isFile(file)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' }).end('No such picture');
+        return;
+      }
+      // A picture made again gets another name: what's kept under one never changes
+      res.writeHead(200, { 'Content-Type': MIME_TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable' });
+      if (req.method === 'HEAD') res.end();
+      else fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
       return;
     }
 
@@ -609,6 +915,7 @@ export function createServer(options = {}) {
       stopWatching = watchTree(rootDir, (file, isFolder) => {
         if (file.endsWith('~') || file.endsWith('.tmp')) return; // editor scratch files
         changed.set(file, isFolder);
+        pictures.queue.forgetFailures();
         clearTimeout(watchDebounceTimer);
         watchDebounceTimer = setTimeout(() => {
           const files = [...changed];
@@ -636,6 +943,9 @@ export function createServer(options = {}) {
       clearTimeout(watchDebounceTimer);
       if (stopWatching) stopWatching();
       for (const id of [...requests.keys()]) endRequest(id, 503, { error: 'htmlboard stopped' });
+      clearTimeout(pictures.progressTimer);
+      pictures.queue.clear();
+      pictures.store?.flush();
       await closeHeadless();
       for (const client of clients) {
         client.end();

@@ -45,6 +45,9 @@
 
 html, body { height: 100%; margin: 0; overflow: hidden; }
 
+/* The page out of sight that makes pictures and does checks and shots shows none of the canvas */
+.is-worker .app { display: none; }
+
 body {
   font-family: var(--font-ui);
   font-weight: 500;
@@ -491,6 +494,8 @@ kbd {
 .sep { width: 1px; height: 20px; margin: 0 4px; background: var(--x-line); }
 
 .live { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 12px; color: var(--x-text-soft); }
+/* Pictures being made out of sight (explorer.js, showProgress) */
+.pictures-note { display: inline-flex; align-items: center; padding: 0 8px; font-size: 12px; color: var(--x-text-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .live::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--x-live); }
 .live.is-off::before { background: var(--x-text-faint); }
 
@@ -591,6 +596,7 @@ kbd {
   .tool span { display: none; }
   .zoom { min-width: 48px; }
   .live { padding: 0 6px; font-size: 0; }
+  .pictures-note { padding: 0 6px; }
   .help { bottom: 64px; }
 }
 

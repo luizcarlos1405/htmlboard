@@ -191,7 +191,7 @@ describe('A browser out of sight', () => {
       assert.equal((await second.json()).browser, 'Fake');
       const opened = logged(log);
       assert.equal(opened.length, 1, 'one browser for both');
-      assert.match(opened[0].args.at(-1), /^http:\/\/127\.0\.0\.1:3972\/\?worker$/);
+      assert.match(opened[0].args.at(-1), /^http:\/\/127\.0\.0\.1:3972\/\?worker&maker=0&engine=chromium$/);
       assert.ok(await until(() => !alive(opened[0].pid)), 'it quits after a while');
       assert.equal((await fetch(`${server.url}/api/check`)).status, 200);
       assert.equal(logged(log).length, 2, 'and opens again for the next request');
@@ -248,7 +248,7 @@ describe('htmlboard check and shot with no canvas running', () => {
     assert.equal(checked.code, 0, checked.stderr);
     assert.equal(checked.stdout, 'Checked 1 design in designs (in headless fake-browser.mjs, as no canvas was running): no problems found.\n');
     const [{ pid, args }] = logged(log);
-    assert.match(args.at(-1), /^http:\/\/127\.0\.0\.1:\d+\/\?worker$/);
+    assert.match(args.at(-1), /^http:\/\/127\.0\.0\.1:\d+\/\?worker&maker=0&engine=chromium$/);
     assert.ok(await until(() => !alive(pid)), 'its browser quit with it');
 
     const shot = await run('shot', ['designs/home.html', '-o', 'home.png']);
