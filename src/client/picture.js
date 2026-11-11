@@ -339,6 +339,7 @@ async function copyPage(doc, files) {
   const live = [root, ...root.querySelectorAll('*')];
   const copies = [copy, ...copy.querySelectorAll('*')]; // the same elements, in the same order
   const waits = [];
+  const vars = new Map(); // a file inline styles use → the custom property on the root that holds it
   const symbols = new Map(); // another file's symbol that <use> draws (`file#id`) → its id in the copy
   let sprite = null; // where the copy keeps them
   let count = 0;
@@ -410,10 +411,41 @@ async function copyPage(doc, files) {
       out.toggleAttribute('selected', el.selected);
     }
     const style = out.getAttribute('style');
-    if (style && /url\(/i.test(style)) waits.push(inlineUrls(style, doc.baseURI, files).then((css) => out.setAttribute('style', css)));
+    if (style && /url\(/i.test(style)) waits.push(styleUrls(style, doc.baseURI, files, vars).then((css) => out.setAttribute('style', css)));
   });
   await Promise.all(waits);
+  if (vars.size) {
+    const held = [...vars.values()].map(({ name, data }) => `${name}: url("${data || 'data:,'}")`);
+    copy.setAttribute('style', [copy.getAttribute('style'), ...held].filter(Boolean).join('; '));
+  }
   return copy;
+}
+
+/**
+ * An inline style with each file it uses as var(--htmlboard-file-N), the custom property `vars` keeps
+ * for that file (`vars`: absolute URL → `{ name, data, reading }`, shared by the elements of a copy,
+ * whose root then holds each file once). Inlined in every element instead, an image a hundred elements
+ * use would be in the picture a hundred times (90 MB for one page).
+ */
+export async function styleUrls(css, base, files, vars) {
+  const urls = new Map();
+  for (const [, , raw] of css.matchAll(URL_RE)) {
+    const url = raw.trim();
+    if (!url || urls.has(url) || /^(data:|#|about:)/i.test(url)) continue;
+    const full = absolute(url, base);
+    if (!full) continue;
+    if (!vars.has(full)) {
+      const entry = { name: `--htmlboard-file-${vars.size + 1}`, data: '' };
+      entry.reading = files.dataUrl(full).then((data) => { entry.data = data; });
+      vars.set(full, entry);
+    }
+    urls.set(url, vars.get(full));
+  }
+  for (const entry of urls.values()) await entry.reading;
+  return css.replace(URL_RE, (whole, quote, raw) => {
+    const entry = urls.get(raw.trim());
+    return entry ? `var(${entry.name})` : whole;
+  });
 }
 
 // An <img> of what a canvas or a video shows, in its place: its attributes (for the page's CSS) and
