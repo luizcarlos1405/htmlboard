@@ -23,7 +23,7 @@ Modern AI agents and developers generate dozens of HTML mockups, layout variatio
 - **Figma is locked down:** Exporting code into proprietary design tools is slow and out of sync.
 - **Traditional dev servers only show one page:** You lose the holistic bird's-eye view of your product's flow.
 
-**HtmlBoard bridges this gap.** It gives you an infinite 2D canvas for HTML artboards — zero config, zero external dependencies, blazing fast, and purpose-built for AI-driven frontend prototyping.
+**HtmlBoard bridges this gap.** It gives you an infinite 2D canvas for HTML artboards — zero config, zero external dependencies, fast enough and getting faster, and purpose-built for AI-driven frontend prototyping.
 
 ---
 
