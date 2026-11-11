@@ -284,11 +284,13 @@ function onLoad(design) {
 // A design without a height takes its page's, measured while the page is laid out at its frame's
 // width: in a smaller window (a browser that shrinks the pages it doesn't draw, see
 // shrinksPagesUndrawn) it would come out far too tall, and its frame couldn't shrink back. Such a
-// page is measured once it's drawn again.
+// page is measured once it's drawn again. Not before its fonts have come either: in the fallback
+// font its text takes more lines (qrec's notes came out 1734 px tall instead of 1594).
 function growToPage(design) {
   const doc = design.iframe.contentDocument;
   // Its window's width, from the page: the frame's (innerWidth) would lay out the canvas too (Chrome)
   if (!doc?.documentElement || doc.documentElement.clientWidth !== design.w) return;
+  if (doc.fonts && doc.fonts.status !== 'loaded') return; // measured again once they have (onLoad)
   const h = Math.ceil(Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0));
   if (!h || h === design.h) return;
   design.h = h;
