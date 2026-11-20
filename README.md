@@ -167,7 +167,7 @@ npx htmlboard skills install --force          # also replace a copy you edited l
 npx htmlboard skills uninstall                # remove them (accepts the same --global / --agent)
 ```
 
-Running `install` again after upgrading HtmlBoard updates the skills; a copy you edited is kept unless you pass `--force`. To tell the two apart, `install` leaves a `.htmlboard-install.json` beside each `SKILL.md`, with a hash of what it wrote: commit it with the skill. Skills installed by HtmlBoard 0.10.0 or older have none, so a copy that differs from the new one is kept: if you didn't edit it, `--force` replaces it this once. A skill that a newer HtmlBoard installed is kept as well.
+Running `install` again after upgrading HtmlBoard updates the skills; a copy you edited is kept unless you pass `--force`. To tell the two apart, `install` leaves a `.htmlboard-lock.json` beside each `SKILL.md`, with the sha256 of each file it wrote: commit it with the skill. Skills installed by HtmlBoard 0.10.0 or older have none, so a copy that differs from the new one is kept: if you didn't edit it, `--force` replaces it this once. A skill that a newer HtmlBoard installed is kept as well.
 
 ### The workflow
 
@@ -458,7 +458,7 @@ installSkills({ dir: process.cwd(), agent: 'all' });
 // → [{ skill: 'htmlboard', path: '…/.claude/skills/htmlboard', status: 'installed' }, …]
 ```
 
-The status is `installed`, `updated`, `unchanged` or `skipped`. A skipped skill has a `reason`: `edited` (changed locally), `unrecorded` (no `.htmlboard-install.json`, so it can't tell) or `newer` (a newer HtmlBoard installed it).
+The status is `installed`, `updated`, `unchanged` or `skipped`. A skipped skill has a `reason`: `edited` (changed locally), `unrecorded` (its `.htmlboard-lock.json` is missing, so it can't tell) or `newer` (a newer HtmlBoard installed it).
 
 And so is the components installer:
 
@@ -526,6 +526,7 @@ htmlboard/
 │   ├── shot.js           # `htmlboard shot`: asks the canvas for a PNG
 │   ├── migrate.js        # `htmlboard migrate`
 │   ├── skills.js         # `htmlboard skills` installer
+│   ├── lock.js           # .htmlboard-lock.json: what the installers wrote, to update what nobody changed
 │   ├── client/           # The canvas
 │   │   ├── index.html    # Explorer shell: list, canvas, toolbar, shortcuts
 │   │   ├── explorer.css  # Dark chrome, dot grid

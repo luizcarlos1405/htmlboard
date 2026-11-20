@@ -6,7 +6,8 @@ import os from 'node:os';
 import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../src/server.js';
-import { installSkills, uninstallSkills, SKILL_RECORD } from '../src/skills.js';
+import { installSkills, uninstallSkills } from '../src/skills.js';
+import { LOCK_FILE } from '../src/lock.js';
 import { planMigration, checkMigration, applyMigration } from '../src/migrate.js';
 import { installComponents, COMPONENTS_FOLDER, COMPONENTS_SCRIPT } from '../src/components.js';
 import { buildCatalog, formatCatalog } from '../src/catalog.js';
@@ -170,7 +171,7 @@ Options:
   -h, --help            Display this help message
 
 Install updates the skills nobody changed since it installed them, and keeps a skill that was changed
-locally. A ${SKILL_RECORD} beside each SKILL.md records what it installed: commit it with the skill.
+locally. A ${LOCK_FILE} beside each SKILL.md records what it installed: commit it with the skill.
 `);
 }
 

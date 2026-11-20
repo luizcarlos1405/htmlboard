@@ -45,6 +45,7 @@ export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,
-  SKILL_TARGETS,
-  SKILL_RECORD
+  SKILL_TARGETS
 } from './skills.js';
+
+export { LOCK_FILE } from './lock.js';
