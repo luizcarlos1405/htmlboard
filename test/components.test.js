@@ -3,13 +3,28 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { loadDesignsManifest, scanDesigns, startServer, installComponents } from '../src/index.js';
+import crypto from 'node:crypto';
+import { execFile, execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadDesignsManifest, scanDesigns, startServer, installComponents, LOCK_FILE } from '../src/index.js';
 import { isTagName, isPage, componentExample, COMPONENTS_SCRIPT_SOURCE } from '../src/components.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI = path.join(__dirname, '..', 'bin', 'htmlboard.js');
+const ROOT = path.join(__dirname, '..');
+const CLI = path.join(ROOT, 'bin', 'htmlboard.js');
+const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+
+/**
+ * Another htmlboard release, made in dir: this package's components modules and components.js, at
+ * `version`, with a line added to components.js. Returns its installComponents.
+ */
+async function release(dir, version, line = '// A line from another release.') {
+  fs.mkdirSync(path.join(dir, 'src', 'templates'), { recursive: true });
+  for (const file of ['components.js', 'lock.js']) fs.copyFileSync(path.join(ROOT, 'src', file), path.join(dir, 'src', file));
+  fs.writeFileSync(path.join(dir, 'src', 'templates', 'components.js'), `${fs.readFileSync(COMPONENTS_SCRIPT_SOURCE, 'utf8')}${line}\n`);
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version, type: 'module' }));
+  return (await import(pathToFileURL(path.join(dir, 'src', 'components.js')).href)).installComponents;
+}
 
 const page = (head = '', title = 'Page') => `<!doctype html>\n<html>\n<head>\n  <title>${title}</title>\n${head}</head>\n<body><main>x</main></body>\n</html>\n`;
 const lines = (manifest) => manifest.sections.flatMap((s) => s.artboards.map((b) =>
@@ -135,17 +150,94 @@ describe('htmlboard components', () => {
   });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  test('adds components.js and components/; keeps one that differs unless forced', () => {
-    const script = path.join(dir, 'designs', 'components.js');
-    assert.equal(installComponents({ dir: path.join(dir, 'designs') }).status, 'installed');
+  test('adds components.js and components/, locked beside them; adding it again is a no-op', () => {
+    const designs = path.join(dir, 'designs');
+    const script = path.join(designs, 'components.js');
+    assert.equal(installComponents({ dir: designs }).status, 'installed');
     assert.ok(fs.readFileSync(script).equals(fs.readFileSync(COMPONENTS_SCRIPT_SOURCE)));
-    assert.ok(fs.statSync(path.join(dir, 'designs', 'components')).isDirectory());
-    assert.equal(installComponents({ dir: path.join(dir, 'designs') }).status, 'unchanged');
+    assert.ok(fs.statSync(path.join(designs, 'components')).isDirectory());
+    const lock = fs.readFileSync(path.join(designs, LOCK_FILE), 'utf8');
+    const sha256 = crypto.createHash('sha256').update(fs.readFileSync(script)).digest('hex');
+    assert.deepEqual(JSON.parse(lock), { htmlboard: VERSION, files: { 'components.js': sha256 } });
+
+    assert.deepEqual(installComponents({ dir: designs }), { path: script, status: 'unchanged' });
+    assert.equal(fs.readFileSync(path.join(designs, LOCK_FILE), 'utf8'), lock);
+  });
+
+  test('an upgrade updates a components.js nobody changed, with no --force', async () => {
+    const designs = path.join(dir, 'designs');
+    installComponents({ dir: designs });
+    const next = await release(path.join(dir, 'next'), '999.0.0');
+
+    assert.equal(next({ dir: designs }).status, 'updated');
+    assert.match(fs.readFileSync(path.join(designs, 'components.js'), 'utf8'), /A line from another release/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(designs, LOCK_FILE), 'utf8')).htmlboard, '999.0.0');
+  });
+
+  test('a components.js changed locally is kept after an upgrade, and --force replaces it', async () => {
+    const designs = path.join(dir, 'designs');
+    const script = path.join(designs, 'components.js');
+    installComponents({ dir: designs });
     fs.appendFileSync(script, '// mine\n');
-    assert.equal(installComponents({ dir: path.join(dir, 'designs') }).status, 'skipped');
+    assert.deepEqual(installComponents({ dir: designs }), { path: script, status: 'skipped', reason: 'edited' });
+
+    const next = await release(path.join(dir, 'next'), '999.0.0');
+    assert.equal(next({ dir: designs }).reason, 'edited');
     assert.match(fs.readFileSync(script, 'utf8'), /\/\/ mine\n$/);
-    assert.equal(installComponents({ dir: path.join(dir, 'designs'), force: true }).status, 'updated');
-    assert.ok(fs.readFileSync(script).equals(fs.readFileSync(COMPONENTS_SCRIPT_SOURCE)));
+    assert.equal(next({ dir: designs, force: true }).status, 'updated');
+    assert.doesNotMatch(fs.readFileSync(script, 'utf8'), /\/\/ mine/);
+    assert.match(fs.readFileSync(script, 'utf8'), /A line from another release/);
+  });
+
+  test('a components.js the lock has no record of is kept; --force replaces it once', async () => {
+    const designs = path.join(dir, 'designs');
+    installComponents({ dir: designs });
+    fs.rmSync(path.join(designs, LOCK_FILE)); // as htmlboard 0.10.0 and older left it
+    const next = await release(path.join(dir, 'next'), '999.0.0');
+
+    assert.equal(next({ dir: designs }).reason, 'unrecorded');
+    assert.doesNotMatch(fs.readFileSync(path.join(designs, 'components.js'), 'utf8'), /A line from another release/);
+    assert.equal(next({ dir: designs, force: true }).status, 'updated');
+
+    const later = await release(path.join(dir, 'later'), '1000.0.0', '// A line from a later release.');
+    assert.equal(later({ dir: designs }).status, 'updated');
+    assert.match(fs.readFileSync(path.join(designs, 'components.js'), 'utf8'), /A line from a later release/);
+  });
+
+  test('an up-to-date components.js gets locked, and what else the lock lists stays', async () => {
+    const designs = path.join(dir, 'designs');
+    installComponents({ dir: designs });
+    fs.writeFileSync(path.join(designs, LOCK_FILE), JSON.stringify({ htmlboard: '0.11.0', files: { 'other.js': 'abc' } }));
+
+    assert.equal(installComponents({ dir: designs }).status, 'unchanged');
+    assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(designs, LOCK_FILE), 'utf8')).files), ['components.js', 'other.js']);
+    const next = await release(path.join(dir, 'next'), '999.0.0');
+    assert.equal(next({ dir: designs }).status, 'updated');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(designs, LOCK_FILE), 'utf8')).files['other.js'], 'abc');
+  });
+
+  test('a components.js a newer htmlboard added is kept, so an older one doesn\'t take it back', async () => {
+    const designs = path.join(dir, 'designs');
+    const next = await release(path.join(dir, 'next'), '999.0.0');
+    next({ dir: designs });
+
+    assert.equal(installComponents({ dir: designs }).reason, 'newer');
+    assert.match(fs.readFileSync(path.join(designs, 'components.js'), 'utf8'), /A line from another release/);
+    assert.equal(installComponents({ dir: designs, force: true }).status, 'updated');
+  });
+
+  test('--init locks the components.js it adds', async () => {
+    const server = await startServer({ dir, port: 3991 });
+    try {
+      // With a canvas already running for the folder, the CLI adds the samples and exits
+      const out = await new Promise((resolve, reject) => execFile(process.execPath, [CLI, dir, '--init', '-p', '3991'], { timeout: 10000 },
+        (error, stdout) => (error ? reject(error) : resolve(stdout))));
+      assert.match(out, /Recorded components\.js in \.htmlboard-lock\.json/);
+      assert.ok(fs.existsSync(path.join(dir, LOCK_FILE)));
+      assert.equal(installComponents({ dir }).status, 'unchanged');
+    } finally {
+      await server.close();
+    }
   });
 
   test('CLI: htmlboard components <dir>', () => {
@@ -153,5 +245,21 @@ describe('htmlboard components', () => {
     assert.match(out, /added/);
     assert.ok(fs.existsSync(path.join(dir, 'designs', 'components.js')));
     assert.match(execFileSync(process.execPath, [CLI, 'components', 'designs'], { cwd: dir, encoding: 'utf8' }), /up to date/);
+  });
+
+  test('CLI: says why it kept components.js', async () => {
+    const run = (folder) => execFileSync(process.execPath, [CLI, 'components', folder], { cwd: dir, encoding: 'utf8' });
+    for (const folder of ['edited', 'unrecorded']) {
+      installComponents({ dir: path.join(dir, folder) });
+      fs.appendFileSync(path.join(dir, folder, 'components.js'), '// mine\n');
+    }
+    fs.rmSync(path.join(dir, 'unrecorded', LOCK_FILE));
+    (await release(path.join(dir, 'next'), '999.0.0'))({ dir: path.join(dir, 'newer') });
+
+    assert.match(run('edited'), /changed locally, kept \(use --force to replace\)\S*  edited\/components\.js\n$/);
+    const unrecorded = run('unrecorded');
+    assert.match(unrecorded, /can't tell if it was changed locally, kept \(use --force to replace\)\S*  unrecorded\/components\.js\n/);
+    assert.match(unrecorded, /added by htmlboard 0\.10\.0 or older has no record/);
+    assert.match(run('newer'), /installed by a newer htmlboard, kept \(use --force to replace\)\S*  newer\/components\.js\n$/);
   });
 });

@@ -342,7 +342,7 @@ A component is a piece of HTML, `components/tx-item.html`:
 - **They work with your stylesheet.** Components are built in the light DOM, with no shadow root in the way, so `styles.css` reaches inside: they use the same classes as the designs (`card`, `btn`, `muted`). A component's CSS comes after `styles.css` and before the design's own `<style>`, so a design can still adjust one element.
 - **Variants are attributes styled in CSS** (`&[positive]`). There is no template logic to learn; a list is several elements.
 - **Relative links start from the component's file**, so they work from every design.
-- **`components.js` is a file in your project**, so designs work on any static server. `--init` adds it; `htmlboard components [dir]` adds it to a designs folder. After upgrading htmlboard, `htmlboard components [dir] --force` replaces an older copy (and any edits you made to it).
+- **`components.js` is a file in your project**, so designs work on any static server. `--init` adds it; `htmlboard components [dir]` adds it to a designs folder. After upgrading htmlboard, `htmlboard components [dir]` updates it, unless you edited it: then `--force` replaces it. To tell the two apart, a `.htmlboard-lock.json` beside it records what was added: commit it too. A `components.js` added by htmlboard 0.10.0 or older has none, so one that differs from the new one is kept until `--force`.
 - **Saving a component reloads the designs that use it.** Component files aren't designs; `designs.json` can show them on the canvas (below).
 - **`htmlboard catalog` lists them** with their attributes, the example each one starts with and the designs that use them.
 - HTML has no self-closing custom elements: write `<tx-item …></tx-item>`, not `<tx-item />`. And a component can't be a table's row or cell itself (the browser moves it out of the `<table>`), but it works inside a cell: `<td><org-cell …></org-cell></td>`.
@@ -468,6 +468,8 @@ import { installComponents } from 'htmlboard';
 installComponents({ dir: './designs' });
 // → { path: '…/designs/components.js', status: 'installed' }
 ```
+
+Its `status`, and its `reason` when it keeps a `components.js`, take the same values as the skill installer's.
 
 And the catalog, as data or as the text `htmlboard catalog` prints:
 

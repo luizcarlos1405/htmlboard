@@ -137,6 +137,7 @@ function openBrowser(url) {
 function scaffoldProject(targetDir) {
   const templatesDir = path.join(__dirname, '..', 'src', 'templates');
   console.log(`[htmlboard] Adding sample designs to ${targetDir}...`);
+  const created = [];
   // Folders are sections and number prefixes the order; each file says its own size
   const copy = (from, rel) => {
     for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
@@ -149,13 +150,26 @@ function scaffoldProject(targetDir) {
         console.log(`  ℹ ${relPath} already exists (skipped)`);
       } else {
         fs.copyFileSync(path.join(from, entry.name), dest);
+        created.push(relPath);
         console.log(`  ✓ Created ${relPath}`);
       }
     }
   };
   fs.mkdirSync(targetDir, { recursive: true });
   copy(templatesDir, '');
+  // Recorded in the lock, so that `htmlboard components` can update it after an upgrade
+  if (created.includes(COMPONENTS_SCRIPT)) {
+    installComponents({ dir: targetDir });
+    console.log(`  ✓ Recorded ${COMPONENTS_SCRIPT} in ${LOCK_FILE}`);
+  }
 }
+
+// Why install kept a skill or components.js, by the result's `reason`
+const KEPT = {
+  edited: '\x1b[33m! changed locally, kept (use --force to replace)\x1b[0m',
+  unrecorded: '\x1b[33m! can\'t tell if it was changed locally, kept (use --force to replace)\x1b[0m',
+  newer: '\x1b[33m! installed by a newer htmlboard, kept (use --force to replace)\x1b[0m'
+};
 
 function showSkillsHelp() {
   console.log(`
@@ -208,14 +222,11 @@ function runSkills(args) {
     process.exit(1);
   }
 
-  // A skipped skill is labelled by why it was kept
   const labels = {
     installed: '\x1b[32m✓ installed\x1b[0m',
     updated: '\x1b[32m✓ updated\x1b[0m',
     unchanged: '\x1b[90m= up to date\x1b[0m',
-    edited: '\x1b[33m! changed locally, kept (use --force to replace)\x1b[0m',
-    unrecorded: '\x1b[33m! can\'t tell if it was changed locally, kept (use --force to replace)\x1b[0m',
-    newer: '\x1b[33m! installed by a newer htmlboard, kept (use --force to replace)\x1b[0m',
+    ...KEPT,
     removed: '\x1b[32m✓ removed\x1b[0m',
     absent: '\x1b[90m- not installed\x1b[0m'
   };
@@ -243,8 +254,8 @@ Each file in ${COMPONENTS_FOLDER}/ is then a custom element named after it (${CO
 
   <script type="module" src="../${COMPONENTS_SCRIPT}"></script>
 
-A ${COMPONENTS_SCRIPT} that differs from this version's (an older one, or one you edited) is kept;
---force replaces it.
+Running it again after an upgrade updates ${COMPONENTS_SCRIPT}, unless it was changed locally: then --force
+replaces it. A ${LOCK_FILE} beside it records what was added: commit it too.
 `);
     return;
   }
@@ -254,7 +265,7 @@ A ${COMPONENTS_SCRIPT} that differs from this version's (an older one, or one yo
     process.exit(1);
   }
   const dirArg = args.find((arg) => !arg.startsWith('-'));
-  const { path: dest, status } = installComponents({
+  const { path: dest, status, reason } = installComponents({
     dir: dirArg || process.cwd(),
     force: args.includes('--force') || args.includes('-f')
   });
@@ -262,9 +273,13 @@ A ${COMPONENTS_SCRIPT} that differs from this version's (an older one, or one yo
     installed: '\x1b[32m✓ added\x1b[0m',
     updated: '\x1b[32m✓ updated\x1b[0m',
     unchanged: '\x1b[90m= up to date\x1b[0m',
-    skipped: '\x1b[33m! differs from this version, kept (use --force to replace)\x1b[0m'
+    ...KEPT
   };
-  console.log(`  ${labels[status]}  ${path.relative(process.cwd(), dest) || dest}`);
+  console.log(`  ${labels[reason || status]}  ${path.relative(process.cwd(), dest) || dest}`);
+  if (reason === 'unrecorded') {
+    console.log(`\n  A ${COMPONENTS_SCRIPT} added by htmlboard 0.10.0 or older has no record of what was added.`);
+    console.log(`  If you didn't change it, --force replaces it, and later upgrades update it on their own.`);
+  }
   if (status === 'installed') {
     const folder = path.relative(process.cwd(), path.join(path.dirname(dest), COMPONENTS_FOLDER)) || COMPONENTS_FOLDER;
     console.log(`\n  Write components in ${folder}/ (tx-item.html is <tx-item>) and load ${COMPONENTS_SCRIPT} in the designs.`);

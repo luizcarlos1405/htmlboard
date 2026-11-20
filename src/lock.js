@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// What htmlboard installs in a project (the agent skills) is recorded in a
+// What htmlboard installs in a project (the agent skills, components.js) is recorded in a
 // .htmlboard-lock.json beside it: the version that wrote it and the sha256 of each file. A copy whose
 // files still have those hashes is out of date at most, so the next install updates it; one whose files
 // don't was edited, and is kept.

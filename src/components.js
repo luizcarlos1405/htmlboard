@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hashFile, readLock, writeLock, compareCopy } from './lock.js';
 
 // Components: every file in a designs folder's components/ is a custom element named after it
 // (components/tx-item.html is <tx-item>), built in the page by components.js, the script beside
@@ -72,24 +73,36 @@ ${componentExample(html, tag)}
 }
 
 /**
- * Add components.js (and the components/ folder) to a designs folder. A components.js that differs
- * from htmlboard's (an older one, or one edited by hand) is kept unless `force` is set.
+ * Add components.js (and the components/ folder) to a designs folder, and record it in the folder's
+ * .htmlboard-lock.json. A components.js nobody changed since it was added is updated. Without `force`,
+ * one is kept when it was changed locally ('edited'), when the lock has no record of it, as with one
+ * added by htmlboard 0.10.0 or older ('unrecorded'), and when a newer htmlboard added it ('newer').
  *
  * @param {object} [options]
  * @param {string} [options.dir=process.cwd()] The designs folder
- * @param {boolean} [options.force=false] Replace a components.js that differs
- * @returns {{path: string, status: 'installed'|'updated'|'unchanged'|'skipped'}}
+ * @param {boolean} [options.force=false] Replace a components.js it would keep
+ * @returns {{path: string, status: 'installed'|'updated'|'unchanged'|'skipped',
+ *   reason?: 'edited'|'unrecorded'|'newer'}} A skipped components.js says why in `reason`
  */
 export function installComponents({ dir = process.cwd(), force = false } = {}) {
   const designsDir = path.resolve(dir);
   const dest = path.join(designsDir, COMPONENTS_SCRIPT);
-  const script = fs.readFileSync(COMPONENTS_SCRIPT_SOURCE);
-  let status = 'installed';
-  if (fs.existsSync(dest)) {
-    if (fs.readFileSync(dest).equals(script)) status = 'unchanged';
-    else status = force ? 'updated' : 'skipped';
-  }
+  const bundled = { [COMPONENTS_SCRIPT]: hashFile(COMPONENTS_SCRIPT_SOURCE) };
+  const lock = readLock(designsDir);
+  const locked = lock?.files[COMPONENTS_SCRIPT];
+  const result = fs.existsSync(dest)
+    ? compareCopy({
+      current: { [COMPONENTS_SCRIPT]: hashFile(dest) },
+      bundled,
+      locked: locked ? { [COMPONENTS_SCRIPT]: locked } : null,
+      lockedBy: lock?.htmlboard,
+      force
+    })
+    : { status: 'installed' };
   fs.mkdirSync(path.join(designsDir, COMPONENTS_FOLDER), { recursive: true });
-  if (status === 'installed' || status === 'updated') fs.writeFileSync(dest, script);
-  return { path: dest, status };
+  if (result.status === 'installed' || result.status === 'updated') fs.writeFileSync(dest, fs.readFileSync(COMPONENTS_SCRIPT_SOURCE));
+  // Locked once written, and when up to date but not locked yet (added by an older htmlboard), so the
+  // next upgrade can update it. What else the lock lists stays.
+  if (result.status !== 'skipped' && locked !== bundled[COMPONENTS_SCRIPT]) writeLock(designsDir, { ...lock?.files, ...bundled });
+  return { path: dest, ...result };
 }
