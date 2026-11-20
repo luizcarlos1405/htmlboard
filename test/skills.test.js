@@ -4,12 +4,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { installSkills, uninstallSkills, SKILLS_DIR } from '../src/index.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { installSkills, uninstallSkills, SKILLS_DIR, SKILL_RECORD } from '../src/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(__dirname, '..', 'bin', 'htmlboard.js');
+const ROOT = path.join(__dirname, '..');
+const BIN = path.join(ROOT, 'bin', 'htmlboard.js');
 const SKILLS = ['htmlboard', 'htmlboard-components', 'htmlboard-designs-json'];
+const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+
+/**
+ * Another htmlboard release, made in dir: this package's skills module and skills, at `version`, with a
+ * line added to the htmlboard skill. Returns its installSkills.
+ */
+async function release(dir, version, line = 'A line from another release.') {
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'src', 'skills.js'), path.join(dir, 'src', 'skills.js'));
+  fs.cpSync(SKILLS_DIR, path.join(dir, 'skills'), { recursive: true });
+  fs.appendFileSync(path.join(dir, 'skills', 'htmlboard', 'SKILL.md'), `\n${line}\n`);
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version, type: 'module' }));
+  return (await import(pathToFileURL(path.join(dir, 'src', 'skills.js')).href)).installSkills;
+}
 
 describe('Agent skills', () => {
   let tmp;
@@ -52,17 +67,95 @@ describe('Agent skills', () => {
     assert.throws(() => installSkills({ dir: tmp, agent: 'nope' }), /Unknown agent/);
   });
 
-  test('reinstalling is a no-op, and local edits are kept unless forced', () => {
+  test('installSkills records what it wrote beside each SKILL.md, and reinstalling is a no-op', () => {
     installSkills({ dir: tmp, agent: 'claude' });
-    assert.equal(installSkills({ dir: tmp, agent: 'claude' })[0].status, 'unchanged');
+    const recordFile = path.join(tmp, '.claude/skills/htmlboard', SKILL_RECORD);
+    const record = fs.readFileSync(recordFile, 'utf8');
+    assert.equal(JSON.parse(record).htmlboard, VERSION);
+    assert.match(JSON.parse(record).sha256, /^[0-9a-f]{64}$/);
 
+    assert.deepEqual(installSkills({ dir: tmp, agent: 'claude' }).map((r) => r.status), Array(SKILLS.length).fill('unchanged'));
+    assert.equal(fs.readFileSync(recordFile, 'utf8'), record);
+  });
+
+  test('an upgrade updates a skill nobody changed, with no --force', async () => {
+    installSkills({ dir: tmp, agent: 'claude' });
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+
+    assert.deepEqual(next({ dir: tmp, agent: 'claude' }).map((r) => r.status), ['updated', 'unchanged', 'unchanged']);
+    const skill = path.join(tmp, '.claude/skills/htmlboard');
+    assert.match(fs.readFileSync(path.join(skill, 'SKILL.md'), 'utf8'), /A line from another release/);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(skill, SKILL_RECORD), 'utf8')).htmlboard, '999.0.0');
+  });
+
+  test('a skill changed locally is kept after an upgrade, and --force replaces it', async () => {
+    installSkills({ dir: tmp, agent: 'claude' });
     const installed = path.join(tmp, '.claude/skills/htmlboard/SKILL.md');
     fs.appendFileSync(installed, '\nMy own notes.\n');
-    assert.equal(installSkills({ dir: tmp, agent: 'claude' })[0].status, 'skipped');
+    assert.deepEqual(installSkills({ dir: tmp, agent: 'claude' })[0], { skill: 'htmlboard', path: path.dirname(installed), status: 'skipped', reason: 'edited' });
+
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+    assert.equal(next({ dir: tmp, agent: 'claude' })[0].reason, 'edited');
     assert.match(fs.readFileSync(installed, 'utf8'), /My own notes/);
 
-    assert.equal(installSkills({ dir: tmp, agent: 'claude', force: true })[0].status, 'updated');
+    assert.equal(next({ dir: tmp, agent: 'claude', force: true })[0].status, 'updated');
     assert.doesNotMatch(fs.readFileSync(installed, 'utf8'), /My own notes/);
+    assert.match(fs.readFileSync(installed, 'utf8'), /A line from another release/);
+  });
+
+  test('a skill with no record is kept, since nothing tells it from an edited one; --force replaces it once', async () => {
+    installSkills({ dir: tmp, agent: 'claude' });
+    const skill = path.join(tmp, '.claude/skills/htmlboard');
+    fs.rmSync(path.join(skill, SKILL_RECORD)); // as htmlboard 0.10.0 and older left it
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+
+    assert.equal(next({ dir: tmp, agent: 'claude' })[0].reason, 'unrecorded');
+    assert.doesNotMatch(fs.readFileSync(path.join(skill, 'SKILL.md'), 'utf8'), /A line from another release/);
+    assert.equal(next({ dir: tmp, agent: 'claude', force: true })[0].status, 'updated');
+    assert.ok(fs.existsSync(path.join(skill, SKILL_RECORD)));
+
+    const later = await release(path.join(tmp, 'later'), '1000.0.0', 'A line from a later release.');
+    assert.equal(later({ dir: tmp, agent: 'claude' })[0].status, 'updated');
+    assert.match(fs.readFileSync(path.join(skill, 'SKILL.md'), 'utf8'), /A line from a later release/);
+  });
+
+  test('an up-to-date skill with no record gets one, so the next upgrade updates it', async () => {
+    installSkills({ dir: tmp, agent: 'claude' });
+    for (const name of SKILLS) fs.rmSync(path.join(tmp, '.claude/skills', name, SKILL_RECORD));
+
+    assert.deepEqual(installSkills({ dir: tmp, agent: 'claude' }).map((r) => r.status), Array(SKILLS.length).fill('unchanged'));
+    for (const name of SKILLS) assert.ok(fs.existsSync(path.join(tmp, '.claude/skills', name, SKILL_RECORD)), name);
+
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+    assert.equal(next({ dir: tmp, agent: 'claude' })[0].status, 'updated');
+  });
+
+  test('a skill a newer htmlboard installed is kept, so an older one doesn\'t take it back', async () => {
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+    next({ dir: tmp, agent: 'claude' });
+    const installed = path.join(tmp, '.claude/skills/htmlboard/SKILL.md');
+
+    assert.deepEqual(installSkills({ dir: tmp, agent: 'claude' }).map((r) => r.reason || r.status), ['newer', 'unchanged', 'unchanged']);
+    assert.match(fs.readFileSync(installed, 'utf8'), /A line from another release/);
+    assert.equal(installSkills({ dir: tmp, agent: 'claude', force: true })[0].status, 'updated');
+    assert.doesNotMatch(fs.readFileSync(installed, 'utf8'), /A line from another release/);
+  });
+
+  test('CRLF line endings are no change, and a skill folder that is a symlink stays one', async () => {
+    installSkills({ dir: tmp, agent: 'agents' });
+    const real = path.join(tmp, '.agents/skills/htmlboard');
+    fs.mkdirSync(path.join(tmp, '.claude/skills'), { recursive: true });
+    fs.symlinkSync(real, path.join(tmp, '.claude/skills/htmlboard'), 'dir');
+    // A checkout with core.autocrlf
+    const skillFile = path.join(real, 'SKILL.md');
+    fs.writeFileSync(skillFile, fs.readFileSync(skillFile, 'utf8').replaceAll('\n', '\r\n'));
+    assert.equal(installSkills({ dir: tmp, agent: 'agents' })[0].status, 'unchanged');
+
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+    assert.equal(next({ dir: tmp, agent: 'claude' })[0].status, 'updated');
+    assert.ok(fs.lstatSync(path.join(tmp, '.claude/skills/htmlboard')).isSymbolicLink());
+    assert.match(fs.readFileSync(skillFile, 'utf8'), /A line from another release/);
+    assert.equal(next({ dir: tmp, agent: 'agents' })[0].status, 'unchanged');
   });
 
   test('uninstallSkills removes only the htmlboard skills', () => {
@@ -80,5 +173,21 @@ describe('Agent skills', () => {
     const out = execFileSync(process.execPath, [BIN, 'skills', 'install', '--agent', 'agents'], { cwd: tmp, encoding: 'utf8' });
     assert.match(out, /installed/);
     assert.ok(fs.existsSync(path.join(tmp, '.agents/skills/htmlboard/SKILL.md')));
+  });
+
+  test('CLI: says why it kept a skill', async () => {
+    const next = await release(path.join(tmp, 'next'), '999.0.0');
+    next({ dir: tmp, agent: 'claude' });
+    installSkills({ dir: tmp, agent: 'agents' });
+    fs.appendFileSync(path.join(tmp, '.agents/skills/htmlboard/SKILL.md'), '\nMy own notes.\n');
+    fs.rmSync(path.join(tmp, '.agents/skills/htmlboard-components', SKILL_RECORD));
+    fs.appendFileSync(path.join(tmp, '.agents/skills/htmlboard-components/SKILL.md'), '\nFrom an older release.\n');
+
+    const out = execFileSync(process.execPath, [BIN, 'skills', 'install'], { cwd: tmp, encoding: 'utf8' });
+    assert.match(out, /installed by a newer htmlboard, kept \(use --force to replace\)\S*  \.claude\/skills\/htmlboard\n/);
+    assert.match(out, /changed locally, kept \(use --force to replace\)\S*  \.agents\/skills\/htmlboard\n/);
+    assert.match(out, /can't tell if it was changed locally, kept \(use --force to replace\)\S*  \.agents\/skills\/htmlboard-components\n/);
+    assert.match(out, /installed by htmlboard 0\.10\.0 or older have no record/);
+    assert.doesNotMatch(out, /Restart your agent session/);
   });
 });

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 
 /** Agent skills bundled with the package, one folder per skill */
 export const SKILLS_DIR = path.join(__dirname, '..', 'skills');
@@ -17,6 +19,13 @@ export const SKILL_TARGETS = {
   claude: path.join('.claude', 'skills'),
   agents: path.join('.agents', 'skills')
 };
+
+/**
+ * The file install leaves beside each SKILL.md: the version that wrote the skill and a hash of what it
+ * wrote. A copy that still has that hash is out of date at most, so the next install updates it; one
+ * that doesn't was edited, and is kept.
+ */
+export const SKILL_RECORD = '.htmlboard-install.json';
 
 function bundledSkills() {
   return fs.readdirSync(SKILLS_DIR, { withFileTypes: true })
@@ -33,32 +42,63 @@ function resolveTargets(agent = 'all') {
   return [agent];
 }
 
-/** List every file under dir as paths relative to it */
+/** List every file under dir as paths relative to it, with / on every system */
 function listFiles(dir, prefix = '') {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const rel = path.join(prefix, entry.name);
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     return entry.isDirectory() ? listFiles(path.join(dir, entry.name), rel) : [rel];
   });
 }
 
-function sameTree(a, b) {
-  const filesA = listFiles(a).sort();
-  const filesB = listFiles(b).sort();
-  return filesA.length === filesB.length &&
-    filesA.every((file, i) => file === filesB[i] &&
-      fs.readFileSync(path.join(a, file)).equals(fs.readFileSync(path.join(b, file))));
+/**
+ * A hash of a skill folder's files, names and contents, leaving out the record. Line endings don't
+ * count: a checkout that turns them into CRLF (Git on Windows) hasn't edited the skill.
+ */
+function skillHash(dir) {
+  const hash = crypto.createHash('sha256');
+  for (const file of listFiles(dir).filter((file) => file !== SKILL_RECORD).sort()) {
+    const content = fs.readFileSync(path.join(dir, file), 'latin1').replaceAll('\r\n', '\n');
+    hash.update(`${file}\0${crypto.createHash('sha256').update(content, 'latin1').digest('hex')}\n`);
+  }
+  return hash.digest('hex');
+}
+
+function readRecord(dir) {
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(dir, SKILL_RECORD), 'utf8'));
+    return typeof record?.sha256 === 'string' ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRecord(dir, sha256) {
+  fs.writeFileSync(path.join(dir, SKILL_RECORD), `${JSON.stringify({ htmlboard: VERSION, sha256 }, null, 2)}\n`);
+}
+
+/** Whether version a comes after version b, comparing major, minor and patch */
+function isNewer(a, b) {
+  const parts = (version) => String(version).split('-')[0].split('.').map((n) => Number(n) || 0);
+  const [pa, pb] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  }
+  return false;
 }
 
 /**
  * Copy the bundled skills into the agents' skill folders.
- * An existing skill folder that differs from the bundled one is left alone unless `force` is set.
+ * A copy nobody changed since install wrote it is updated. Without `force`, a copy is kept when it was
+ * changed locally ('edited'), when it has no record of what was installed, as with skills installed by
+ * htmlboard 0.10.0 or older ('unrecorded'), and when a newer htmlboard installed it ('newer').
  *
  * @param {object} [options]
  * @param {'claude'|'agents'|'all'} [options.agent='all']
  * @param {boolean} [options.global=false] Install under the home folder instead of the project
  * @param {string} [options.dir=process.cwd()] Project root (ignored with `global`)
- * @param {boolean} [options.force=false] Replace skills that were changed locally
- * @returns {{skill: string, path: string, status: 'installed'|'updated'|'unchanged'|'skipped'}[]}
+ * @param {boolean} [options.force=false] Replace the skills it would keep
+ * @returns {{skill: string, path: string, status: 'installed'|'updated'|'unchanged'|'skipped',
+ *   reason?: 'edited'|'unrecorded'|'newer'}[]} A skipped skill says why in `reason`
  */
 export function installSkills({ agent = 'all', global = false, dir = process.cwd(), force = false } = {}) {
   const base = global ? os.homedir() : path.resolve(dir);
@@ -68,23 +108,35 @@ export function installSkills({ agent = 'all', global = false, dir = process.cwd
     for (const skill of bundledSkills()) {
       const src = path.join(SKILLS_DIR, skill);
       const dest = path.join(base, SKILL_TARGETS[target], skill);
+      const bundled = skillHash(src);
       let status = 'installed';
 
       if (fs.existsSync(dest)) {
-        if (sameTree(src, dest)) {
+        const copy = skillHash(dest);
+        const record = readRecord(dest);
+        if (copy === bundled) {
+          // Recorded now if it wasn't (installed by an older htmlboard), so the next upgrade can update it
+          if (record?.sha256 !== bundled) writeRecord(dest, bundled);
           results.push({ skill, path: dest, status: 'unchanged' });
           continue;
         }
-        if (!force) {
-          results.push({ skill, path: dest, status: 'skipped' });
+        const reason = !record ? 'unrecorded'
+          : record.sha256 !== copy ? 'edited'
+            : isNewer(record.htmlboard, VERSION) ? 'newer'
+              : null;
+        if (reason && !force) {
+          results.push({ skill, path: dest, status: 'skipped', reason });
           continue;
         }
-        fs.rmSync(dest, { recursive: true, force: true });
         status = 'updated';
       }
 
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.cpSync(src, dest, { recursive: true });
+      // A skill folder that is a symlink stays one: the folder it points to is replaced
+      const folder = fs.existsSync(dest) ? fs.realpathSync(dest) : dest;
+      fs.rmSync(folder, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(folder), { recursive: true });
+      fs.cpSync(src, folder, { recursive: true });
+      writeRecord(folder, bundled);
       results.push({ skill, path: dest, status });
     }
   }

@@ -163,11 +163,11 @@ This writes them in `.claude/skills/` (Claude Code) and `.agents/skills/` (Codex
 ```bash
 npx htmlboard skills install --global         # for your user (~/.claude/skills, ~/.agents/skills), all projects
 npx htmlboard skills install --agent claude   # only one agent: claude | agents | all (default)
-npx htmlboard skills install --force          # update a copy you edited locally
+npx htmlboard skills install --force          # also replace a copy you edited locally
 npx htmlboard skills uninstall                # remove them (accepts the same --global / --agent)
 ```
 
-Running `install` again after upgrading HtmlBoard updates the skills; a copy you edited is kept unless you pass `--force`.
+Running `install` again after upgrading HtmlBoard updates the skills; a copy you edited is kept unless you pass `--force`. To tell the two apart, `install` leaves a `.htmlboard-install.json` beside each `SKILL.md`, with a hash of what it wrote: commit it with the skill. Skills installed by HtmlBoard 0.10.0 or older have none, so a copy that differs from the new one is kept: if you didn't edit it, `--force` replaces it this once. A skill that a newer HtmlBoard installed is kept as well.
 
 ### The workflow
 
@@ -457,6 +457,8 @@ import { installSkills } from 'htmlboard';
 installSkills({ dir: process.cwd(), agent: 'all' });
 // → [{ skill: 'htmlboard', path: '…/.claude/skills/htmlboard', status: 'installed' }, …]
 ```
+
+The status is `installed`, `updated`, `unchanged` or `skipped`. A skipped skill has a `reason`: `edited` (changed locally), `unrecorded` (no `.htmlboard-install.json`, so it can't tell) or `newer` (a newer HtmlBoard installed it).
 
 And so is the components installer:
 

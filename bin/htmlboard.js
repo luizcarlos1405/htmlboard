@@ -6,7 +6,7 @@ import os from 'node:os';
 import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '../src/server.js';
-import { installSkills, uninstallSkills } from '../src/skills.js';
+import { installSkills, uninstallSkills, SKILL_RECORD } from '../src/skills.js';
 import { planMigration, checkMigration, applyMigration } from '../src/migrate.js';
 import { installComponents, COMPONENTS_FOLDER, COMPONENTS_SCRIPT } from '../src/components.js';
 import { buildCatalog, formatCatalog } from '../src/catalog.js';
@@ -166,8 +166,11 @@ Options:
   -g, --global          Install for your user (~/.claude/skills, ~/.agents/skills) instead of this project
   -a, --agent <name>    claude (.claude/skills), agents (.agents/skills: Codex and other agents), or all (default)
   -d, --dir <path>      Project root (default: current directory)
-  -f, --force           Replace a skill that was changed locally
+  -f, --force           Replace a skill even if it was changed locally
   -h, --help            Display this help message
+
+Install updates the skills nobody changed since it installed them, and keeps a skill that was changed
+locally. A ${SKILL_RECORD} beside each SKILL.md records what it installed: commit it with the skill.
 `);
 }
 
@@ -204,16 +207,23 @@ function runSkills(args) {
     process.exit(1);
   }
 
+  // A skipped skill is labelled by why it was kept
   const labels = {
     installed: '\x1b[32m✓ installed\x1b[0m',
     updated: '\x1b[32m✓ updated\x1b[0m',
     unchanged: '\x1b[90m= up to date\x1b[0m',
-    skipped: '\x1b[33m! changed locally, kept (use --force to replace)\x1b[0m',
+    edited: '\x1b[33m! changed locally, kept (use --force to replace)\x1b[0m',
+    unrecorded: '\x1b[33m! can\'t tell if it was changed locally, kept (use --force to replace)\x1b[0m',
+    newer: '\x1b[33m! installed by a newer htmlboard, kept (use --force to replace)\x1b[0m',
     removed: '\x1b[32m✓ removed\x1b[0m',
     absent: '\x1b[90m- not installed\x1b[0m'
   };
-  for (const { path: dest, status } of results) {
-    console.log(`  ${labels[status]}  ${path.relative(process.cwd(), dest) || dest}`);
+  for (const { path: dest, status, reason } of results) {
+    console.log(`  ${labels[reason || status]}  ${path.relative(process.cwd(), dest) || dest}`);
+  }
+  if (results.some((r) => r.reason === 'unrecorded')) {
+    console.log(`\n  Skills installed by htmlboard 0.10.0 or older have no record of what was installed.`);
+    console.log(`  If you didn't change them, --force replaces them, and later upgrades update them on their own.`);
   }
   if (action === 'install' && results.some((r) => r.status === 'installed' || r.status === 'updated')) {
     console.log(`\n  Restart your agent session to load the skills, then ask it for a design.`);

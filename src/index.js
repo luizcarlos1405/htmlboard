@@ -45,5 +45,6 @@ export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,
-  SKILL_TARGETS
+  SKILL_TARGETS,
+  SKILL_RECORD
 } from './skills.js';
