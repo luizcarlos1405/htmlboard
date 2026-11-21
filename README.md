@@ -87,7 +87,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
-  htmlboard state [directory]                      The design selected on the canvas, the theme, the filter, the search
+  htmlboard state [directory]                      The design selected on the canvas, and the element picked in it
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -272,10 +272,12 @@ When you say "make this one darker", the agent can't see which design you mean. 
 ```text
 $ npx htmlboard state designs
 selected: 01-screens/02-customers.html (1280 × 820) · dark
+element: .badge.badge-amber "Trial ends in 3 days"
 filter: desktop · search: "cust"
 ```
 
-- **What it says:** the design selected on the canvas, with its size (a size variant is the same file at another size) and the theme when the theme switch has one on, then the filter and the search when they narrow the canvas.
+- **What it says:** the design selected on the canvas, with its size (a size variant is the same file at another size) and the theme when the theme switch has one on; the element picked in it; then the filter and the search when they narrow the canvas.
+- **Pointing at an element:** click a design to select it, then click inside it: the element under the pointer is picked, outlined on the canvas with its selector above it, and "make this bigger" needs no explaining. The selector is the shortest that finds that element and no other (`.table tr:nth-child(3) .badge` when it takes that much), so the agent can pass it to `shot -s`. A double-click still only fits the design; <kbd>Esc</kbd> lets go of the element, then deselects. Zoomed out, where designs are pictures, a click only selects. When the design is saved, the element is found again by its selector.
 - **From your browser:** each tab with the canvas open tells the server what it shows whenever that changes; with several open, the one used last answers. Unlike `check` and `shot`, it starts no canvas and opens no browser, since only yours knows what you're looking at: it exits with 2 when no canvas is running for the designs, or none is open in a browser. `--json` gives it as data.
 
 ---
@@ -414,6 +416,7 @@ It writes each file's size, category, label, variants and description as tags af
 | <kbd>Shift</kbd> + <kbd>0</kbd> | Zoom to 100% |
 | <kbd>Shift</kbd> + <kbd>1</kbd> | Fit everything (what the search keeps) |
 | <kbd>Shift</kbd> + <kbd>2</kbd>, double-click | Fit the design |
+| Click in the selected design | Point at the element under the pointer (`htmlboard state` tells your agent) |
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous / next design |
 | <kbd>Enter</kbd> | Open the selected design on its own |
 | <kbd>C</kbd> / <kbd>S</kbd> | Copy / save the selected design as an image (<kbd>Shift</kbd> + <kbd>S</kbd>: choose the folder) |
@@ -423,9 +426,9 @@ It writes each file's size, category, label, variants and description as tags af
 | <kbd>R</kbd> | Reload the designs |
 | <kbd>\</kbd> | Show or hide the list |
 | <kbd>?</kbd> | Show the shortcuts |
-| <kbd>Esc</kbd> | Deselect, then clear the search, then the filter |
+| <kbd>Esc</kbd> | Let go of the element, then deselect, then clear the search, then the filter |
 
-On the canvas the designs don't take clicks: the canvas takes every click and scroll, so <kbd>Ctrl</kbd> + scroll never zooms the page itself. Use **Open** (or <kbd>Enter</kbd>) to try a design's links and hover states on its own.
+On the canvas the designs don't take clicks: the canvas takes every click and scroll (a click inside the selected design points at an element, see [`htmlboard state`](#what-you-have-selected-htmlboard-state)), so <kbd>Ctrl</kbd> + scroll never zooms the page itself. Use **Open** (or <kbd>Enter</kbd>) to try a design's links and hover states on its own.
 
 **Zoomed out, pictures.** Below 25% zoom, each design shows a picture of its page instead of the page itself, and the page isn't loaded at all, so a canvas of hundreds of designs opens at once and stays light: its animations stop, and nothing is drawn again until the view changes.
 
@@ -529,7 +532,7 @@ And what the canvas shows in the browser (the server answers it at `GET /api/sta
 import { readState, formatState } from 'htmlboard';
 
 const { open, state } = await readState('./designs'); // { port } too; throws when no canvas is open in a browser
-// → state: { selected: { file: '01-screens/02-customers.html', title, width, height }, element: null, theme: 'dark', filter: null, search: null }
+// → state: { selected: { file: '01-screens/02-customers.html', title, width, height }, element: { selector: '.badge.badge-amber', text: 'Trial ends in 3 days' }, theme: 'dark', filter: null, search: null }
 console.log(formatState(state, { open }));
 ```
 
@@ -563,6 +566,7 @@ htmlboard/
 │   │   ├── explorer.js   # Layout, pan/zoom, search, live reload
 │   │   ├── check.js      # Checks the designs in frames out of sight, for `htmlboard check`
 │   │   ├── shot.js       # A design, or one element, as a PNG, for `htmlboard shot`
+│   │   ├── elements.js   # An element named by a selector that finds only it (the picker, inspect)
 │   │   ├── theme.js      # Themes: how a page is shown in one, and which ones its stylesheets have
 │   │   ├── picture.js    # A design as an image, drawn by the browser (copy, save, zoomed out, shots)
 │   │   ├── maker.js      # Out of sight: loads each design whose picture the server wants

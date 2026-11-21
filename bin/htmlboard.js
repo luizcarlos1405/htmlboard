@@ -88,7 +88,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
-  htmlboard state [directory]                      The design selected on the canvas, the theme, the filter, the search
+  htmlboard state [directory]                      The design selected on the canvas, and the element picked in it
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -116,6 +116,7 @@ Examples:
 On the canvas:
   Drag, scroll          Move around
   Ctrl/Cmd + scroll     Zoom (or pinch)
+  Click                 Select a design; inside the selected one, point at an element (htmlboard state)
   Double-click          Fit a design (Shift + 1 fits everything)
   /                     Search
   1 – 4                 Show all, mobile, tablet, desktop
@@ -497,9 +498,9 @@ Usage:
   htmlboard state [directory or file] [-p <port>] [--json]
 
 Prints what the canvas running for the designs shows in the browser: the design selected (with its
-size, and the theme when the theme switch has one), the element picked in it, the filter and the
-search. For an AI agent to know what the person means by "this" or "the selected one". With several
-tabs open, the one used last.
+size, and the theme when the theme switch has one), the element picked in it (a click inside the
+selected design picks the element under the pointer), the filter and the search. For an AI agent to
+know what the person means by "this" or "the selected one". With several tabs open, the one used last.
 
 Exits with 2 when no canvas is running for the designs, or none is open in a browser.
 

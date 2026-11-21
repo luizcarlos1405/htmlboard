@@ -6,6 +6,7 @@
 // The server lists the designs at /api/designs and pushes saved files at /api/events.
 
 import { checkDesigns } from './check.js';
+import { selectorOf, textOf } from './elements.js';
 import { makePictures } from './maker.js';
 import { drawDesign, forgetFiles } from './picture.js';
 import { shotDesign, ShotError } from './shot.js';
@@ -53,6 +54,7 @@ const els = {
   app: $('app'), title: $('title'), list: $('list'), count: $('count'), search: $('search'),
   noMatch: $('no-match'), filters: $('filters'), viewport: $('viewport'), world: $('world'), overlay: $('overlay'),
   hover: $('hover'), selection: $('selection'), size: $('size'), zoom: $('zoom-reset'), open: $('open'),
+  picked: $('picked'), pickedName: $('picked-name'),
   live: $('live'), help: $('help'), helpToggle: $('help-toggle'), toggleList: $('toggle-list'),
   toast: $('toast'), notice: $('notice'), noticeTitle: $('notice-title'), noticeText: $('notice-text'),
   version: $('version'), sectionsBar: $('sections-bar'), expandAll: $('expand-all'), collapseAll: $('collapse-all'),
@@ -70,6 +72,8 @@ const state = {
   designs: [],          // { id, file, path, title, search, section, w, h, autoHeight, x, y, frame, page, iframe, picture, label, item, … }
   view: { x: 0, y: 0, z: 1 },
   selected: null,
+  // The element picked in the selected design, by a click inside it: { design, el, selector, text }
+  element: null,
   hover: null,
   actions: null,        // the design whose buttons show (copy, save as an image)
   query: [],            // the search's words, folded
@@ -297,6 +301,13 @@ function unloadPage(design) {
 function onLoad(design) {
   const doc = design.iframe.contentDocument;
   design.loads++; // a picture the canvas was making of it is of the page before
+  // The element picked in it, in its page as it is now (saved, reloaded): by its selector, else gone
+  if (state.element?.design === design) {
+    const el = doc?.querySelector(state.element.selector);
+    if (el) state.element = { ...state.element, el, text: textOf(el) };
+    else state.element = null;
+    tellState();
+  }
   design.loadedAt = design.changedAt = performance.now();
   paintFrame(design);
   setTimeout(() => paintFrame(design), DRAWN_MS + 20); // its picture goes once it's been drawn a moment
@@ -682,6 +693,7 @@ function paint() {
 function paintMarks() {
   place(els.selection, state.selected);
   place(els.hover, state.hover === state.selected ? null : state.hover);
+  placeElement();
   const { selected } = state;
   els.size.hidden = !selected;
   if (selected) {
@@ -727,6 +739,62 @@ function paintActions() {
   els.actions.classList.toggle('is-below', below);
   els.actions.style.transform = `translate(${Math.round(ax)}px, ${Math.round(ay)}px)`;
   design.label.style.width = `${Math.round(ay < top ? Math.max(0, ax - left - 8) : design.w * z)}px`;
+}
+
+// The element picked: outlined over its design, with its name above it, while its page shows
+function placeElement() {
+  const { element } = state;
+  const box = element?.el.isConnected && isLive(element.design) && placed(element.design) ? element.el.getBoundingClientRect() : null;
+  const shown = Boolean(box && (box.width || box.height));
+  els.picked.hidden = els.pickedName.hidden = !shown;
+  if (!shown) return;
+  const { x, y, z } = state.view;
+  const left = x + (element.design.x + box.left) * z;
+  const top = y + (element.design.y + box.top) * z;
+  els.picked.style.transform = `translate(${left}px, ${top}px)`;
+  els.picked.style.width = `${box.width * z}px`;
+  els.picked.style.height = `${box.height * z}px`;
+  els.pickedName.textContent = element.selector;
+  els.pickedName.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px) translateY(calc(-100% - 4px))`;
+}
+
+/**
+ * Pick the element under a point of the screen in a design whose page shows: whether it did. A point
+ * on the page's own background drops the element picked.
+ */
+let lastPick = { time: 0, before: null };
+function pick(design, point) {
+  if (!isLive(design)) return false;
+  const doc = design.iframe.contentDocument;
+  const { x, y, z } = state.view;
+  const px = (point.x - x) / z - design.x;
+  const py = (point.y - y) / z - design.y;
+  if (!doc?.documentElement || px < 0 || py < 0 || px > design.w || py > design.h) return false;
+  const el = doc.elementFromPoint(px, py);
+  const now = performance.now();
+  // A double click only zooms: what was picked before it comes back (see undoPick)
+  lastPick = { time: now, before: now - lastPick.time < DOUBLE_MS ? lastPick.before : state.element };
+  state.element = el && el !== doc.documentElement && el !== doc.body
+    ? { design, el, selector: selectorOf(el), text: textOf(el) }
+    : null;
+  paintMarks();
+  tellState();
+  return true;
+}
+
+// The clicks of a double click picked: back to what was picked before them
+function undoPick() {
+  if (performance.now() - lastPick.time > DOUBLE_MS * 2) return;
+  state.element = lastPick.before?.design === state.selected ? lastPick.before : null;
+  lastPick = { time: 0, before: null };
+  paintMarks();
+  tellState();
+}
+
+function dropElement() {
+  state.element = null;
+  paintMarks();
+  tellState();
 }
 
 function place(node, design) {
@@ -861,6 +929,7 @@ function actualSize() {
 // ---------------------------------------------------------------- selection
 
 function select(design, { fit: fitIt = false, animate = true } = {}) {
+  if (state.element && state.element.design !== design) state.element = null;
   state.selected = design || null;
   for (const each of state.designs) {
     if (each === state.selected) each.item.setAttribute('aria-current', 'true');
@@ -890,6 +959,7 @@ function tellState() {
     const shows = {
       tab: TAB,
       selected: selected ? { file: selected.file, title: selected.title, width: selected.w, height: selected.h } : null,
+      element: state.element ? { selector: state.element.selector, text: state.element.text } : null,
       theme: state.theme,
       filter: state.category,
       search: els.search.value.trim(),
@@ -1123,9 +1193,13 @@ const pictureAsk = () => ({
 });
 
 // What a design shows: its picture, zoomed out and while its page isn't ready, else its page
+// Its page shows, live: not its picture (zoomed out), nor its frame while it loads
+function isLive(design) {
+  return pageReady(design) && (!state.pictures || design.failed);
+}
+
 function paintFrame(design) {
-  const ready = pageReady(design);
-  const live = ready && (!state.pictures || design.failed);
+  const live = isLive(design);
   const picture = Boolean(design.pictured) && !live;
   // Zoomed out, its page isn't drawn, unless the canvas makes its pictures and this one is out of
   // date, no picture could be made of it out of sight, or it's being copied as an image
@@ -1957,20 +2031,26 @@ function wire() {
     press = null;
     viewport.classList.remove('is-panning');
     if (done.moved || done.pan || event.type === 'pointercancel') return;
-    const design = hit(local(event));
+    const point = local(event);
+    const design = hit(point);
     const now = performance.now();
     if (done.touch && design && design === lastClick.design && now - lastClick.time < DOUBLE_MS) {
       lastClick = { time: 0, design: null };
+      undoPick();
       select(design, { fit: true });
       return;
     }
     lastClick = { time: now, design };
+    // A click inside the design that's selected picks the element under the pointer
+    if (design && design === state.selected && pick(design, point)) return;
     select(design);
   };
   viewport.addEventListener('dblclick', (event) => {
     if (!onCanvas(event)) return;
     const design = hit(local(event));
-    if (design) select(design, { fit: true });
+    if (!design) return;
+    undoPick();
+    select(design, { fit: true });
   });
   viewport.addEventListener('pointerup', release);
   viewport.addEventListener('pointercancel', release);
@@ -2023,8 +2103,9 @@ function wire() {
     else if (key === 'ArrowRight' || key === 'ArrowDown') step(1);
     else if (key === 'ArrowLeft' || key === 'ArrowUp') step(-1);
     else if (key === 'Escape') {
-      // One thing at a time: the shortcuts, the selection, the search, the filter
+      // One thing at a time: the shortcuts, the element picked, the selection, the search, the filter
       if (!els.help.hidden) toggleHelp(false);
+      else if (state.element) dropElement();
       else if (state.selected) select(null);
       else if (els.search.value) {
         els.search.value = '';
