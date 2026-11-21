@@ -1,11 +1,12 @@
 // Inspecting a design (`htmlboard inspect`): its elements as rows of text, so an agent reads the
 // numbers instead of an image. Each row is an element: the selector that finds it, its box (where it
 // is and its size, in the page's px), a bit of its text, what went wrong with it as the check finds it
-// (cut off, spilling out, past the frame's edge) and the computed styles asked for. With a selector,
+// (cut off, spilling out, past the frame's edge, low contrast) and the computed styles asked for. With a selector,
 // that element and what's in it, a few levels deep; without one, the page's outline: its landmarks,
 // headings, tables and components. The design loads afresh, out of sight, as for a shot.
 
-import { hiddenBox, layoutProblems, openDesign } from './check.js';
+import { hiddenBox, layoutProblems, lowContrast, measurer, openDesign } from './check.js';
+import { shownRatio } from './contrast.js';
 import { selectorOf, textOf } from './elements.js';
 import { themeFor } from './theme.js';
 
@@ -114,9 +115,11 @@ function outline(doc) {
   });
 }
 
-/** What the check finds wrong in the page's layout, by the element it's about */
+/** What the check finds wrong in the page's layout and contrast, by the element it's about */
 function problemsByElement(win, doc) {
-  const { beyond, cut, spilled } = layoutProblems(win, doc);
+  const measures = measurer(win, doc);
+  const { beyond, cut, spilled } = layoutProblems(win, doc, measures);
+  const { low } = lowContrast(win, doc, measures);
   const marks = new Map();
   const add = (el, problem) => {
     if (!marks.has(el)) marks.set(el, []);
@@ -125,6 +128,7 @@ function problemsByElement(win, doc) {
   for (const { el, right } of beyond) add(el, `past the right edge (to ${right})`);
   for (const [el, { overflow }] of cut) add(el, `cuts text off (overflow: ${overflow})`);
   for (const el of spilled.keys()) add(el, 'text spills out');
+  for (const { el, ratio, needs, color, background } of low) add(el, `contrast ${shownRatio(ratio)}:1, needs ${needs} (${color} on ${background})`);
   return marks;
 }
 

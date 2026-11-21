@@ -346,8 +346,9 @@ Usage:
 Has the canvas running for the designs load each one afresh in a browser and prints what went
 wrong, in a few lines of text: script errors and console.error, files that aren't there, components
 that weren't built, fonts that didn't load, content cut at the frame's edge, text cut off or
-spilling out of its box. A directory checks the designs in it, a file just that design (default:
-the current directory).
+spilling out of its box. Notes, which don't fail the check, say when content goes on below a frame
+of fixed height and when text is too close in color to its background (WCAG AA contrast). A
+directory checks the designs in it, a file just that design (default: the current directory).
 
 It runs in the browser the canvas is open in. With none open, the canvas opens itself out of sight
 in Chrome, Chromium, Edge or Firefox (HTMLBOARD_BROWSER=<path> names another, =none turns it off);
@@ -504,7 +505,7 @@ Prints a design's elements as text, one row each, for an AI agent to read sizes,
 as numbers, and a design's structure without reading the whole file: the selector that finds the
 element (for shot -s), its box (x,y width×height, in the page's px), a bit of its text, the computed
 styles asked for, and what went wrong with it as htmlboard check sees it (text cut off or spilling
-out, content past the frame's edge).
+out, content past the frame's edge, low contrast).
 
 With a selector, that element and what's in it, 3 levels deep; without one, the page's outline: its
 landmarks, headings, tables and components. At most 60 rows, then how many more.

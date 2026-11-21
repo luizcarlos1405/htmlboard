@@ -40,7 +40,7 @@ export async function runCheck(target, { port, root, theme, themes } = {}) {
 
 const LEVELS = ['error', 'layout', 'note'];
 // The page as a whole first, then its scripts, its components and its files
-const KINDS = ['blank', 'timeout', 'check', 'script', 'console', 'component', 'missing', 'load', 'font', 'beyond', 'cut', 'spill', 'below'];
+const KINDS = ['blank', 'timeout', 'check', 'script', 'console', 'component', 'missing', 'load', 'font', 'beyond', 'cut', 'spill', 'below', 'contrast'];
 
 /** Whether the report has something to fix (notes aside) */
 export const hasProblems = (report) => report.designs.some((design) => design.problems.some((problem) => problem.level !== 'note'));
@@ -122,6 +122,12 @@ function describe(problem, show) {
       return `text spills out of ${problem.selector}: "${problem.text}"${problem.count > 1 ? ` and ${problem.count - 1} more` : ''}`;
     case 'below':
       return `content goes on below the frame, down to ${problem.bottom} px (the frame is ${problem.frame} px tall)`;
+    case 'contrast': {
+      if (problem.more) return `and ${problem.more} more pair${problem.more > 1 ? 's' : ''} of colors with low contrast`;
+      const others = problem.count > 1 ? ` and ${problem.count - 1} more` : '';
+      if (problem.unmeasured) return `contrast not measured over an image: ${problem.selector} "${problem.text}"${others}`;
+      return `contrast ${problem.ratio}:1, needs ${problem.needs} (${problem.color} on ${problem.background}): ${problem.selector} "${problem.text}"${others}`;
+    }
     case 'check':
       return `couldn't check it: ${problem.message}`;
     default:

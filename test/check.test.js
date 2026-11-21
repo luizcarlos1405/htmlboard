@@ -7,6 +7,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer, formatReport } from '../src/index.js';
+import { hasProblems } from '../src/check.js';
 import { withProbe } from '../src/server.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -269,5 +270,31 @@ b.html?theme=dark · B · dark
 c.html · C
   note   content goes on below the frame, down to 900 px (the frame is 844 px tall)
 `);
+  });
+
+  test('low contrast is a note, a line per pair of colors, the worst first; text over an image is said to be unmeasured', () => {
+    const report = {
+      dir: '/designs',
+      root: '/designs',
+      designs: [{
+        file: 'home.html',
+        title: 'Home',
+        problems: [
+          { level: 'note', kind: 'contrast', ratio: 2.4, needs: 4.5, color: '#a1a3a5', background: '#fcfeff', selector: '.domain', text: 'my-store.ktc.shop', count: 5 },
+          { level: 'note', kind: 'contrast', ratio: 2.3, needs: 3, color: '#aaaaaa', background: '#ffffff', selector: 'h2.hero', text: 'Large and faint', themes: ['dark'] },
+          { level: 'note', kind: 'contrast', more: 1 },
+          { level: 'note', kind: 'contrast', unmeasured: true, selector: '.photo p', text: 'Text on a photo', count: 2 },
+        ],
+      }],
+    };
+    assert.equal(formatReport(report), `Checked 1 design in /designs: no problems found, 1 with notes.
+
+home.html · Home
+  note   contrast 2.4:1, needs 4.5 (#a1a3a5 on #fcfeff): .domain "my-store.ktc.shop" and 4 more
+  note   [dark] contrast 2.3:1, needs 3 (#aaaaaa on #ffffff): h2.hero "Large and faint"
+  note   and 1 more pair of colors with low contrast
+  note   contrast not measured over an image: .photo p "Text on a photo" and 1 more
+`);
+    assert.equal(hasProblems(report), false, 'notes alone are no problems: the check exits 0');
   });
 });

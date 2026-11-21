@@ -238,6 +238,7 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
   error  missing file: img/acme.svg (<img>)
   layout cut at the right edge (the frame is 1280 px wide): table.table reaches 1342
   layout text cut off by p.plan (overflow: hidden): "Enterprise annual plan"
+  note   contrast 2.4:1, needs 4.5 (#a1a3a5 on #ffffff): .meta "Updated 2 h ago" and 4 more
 
 01-screens/03-mobile.html · Mobile
   layout text spills out of .btn: "Confirm and continue"
@@ -246,8 +247,9 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
   note   content goes on below the frame, down to 1460 px (the frame is 1350 px tall)
 ```
 
-- **What it finds:** script errors and `console.error`; files that aren't there (a stylesheet's fonts and images, a fetch's data too); components that weren't built; fonts that didn't load; a page that shows nothing; content cut at the frame's right edge; text cut off by a box that hides its overflow, or spilling out of its box. A note says when content goes on below a frame of fixed height: fine for a screen that scrolls, not for a flyer.
-- **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (colors, spacing, alignment).
+- **What it finds:** script errors and `console.error`; files that aren't there (a stylesheet's fonts and images, a fetch's data too); components that weren't built; fonts that didn't load; a page that shows nothing; content cut at the frame's right edge; text cut off by a box that hides its overflow, or spilling out of its box. A note says when content goes on below a frame of fixed height: fine for a screen that scrolls, not for a flyer. Another says when text is too close in color to its background for WCAG AA: under 4.5:1, or 3:1 for large text (24 px, or 18.66 px bold).
+- **Contrast is a note**, so it doesn't fail the check: muted text and brand colors are often meant, and a design may keep them. What's behind a text is what the page shows under it: the boxes there, blended down to a solid color (translucent ones and opacity count, and so does the page's own light or dark backdrop), or the worst stop of a gradient. Left alone: disabled and `aria-hidden` text, text hidden on purpose (transparent, or visually hidden for screen readers), text under a dialog's backdrop, and small decorations beside it (a select's arrow, an icon). Text over a photo can't be measured: a note says which, for a look with `shot`. Each pair of colors is one line, the worst first.
+- **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (spacing, alignment, which colors), only measures contrast.
 - **It runs in a browser**: the one the canvas is open in, or with none open (a background session, nobody at the computer), one the canvas opens out of sight: Chrome, Chromium or Edge, else Firefox, headless. `HTMLBOARD_BROWSER=<path>` names another, `HTMLBOARD_BROWSER=none` turns this off. It quits after a minute without checks, shots or pictures to make (see **Zoomed out, pictures**), and when the canvas stops. Nothing is downloaded: the browser only opens the canvas's page, which does the work.
 - **With no canvas running** for the designs (CI, a fresh worktree), the check starts one for itself, out of sight, and stops it when it's done. That one serves the designs folder (the nearest folder above the file with a `designs.json`, `styles.css`, `components.js` or `components/`), so if the designs link files outside it, add `--root <folder>` as you would to the canvas; the report says so when files are missing.
 - Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start, and to set the theme they're shown in before their own scripts run; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
@@ -288,7 +290,7 @@ $ npx htmlboard inspect designs/01-screens/02-customers.html .page-title --style
 h1.page-title  272,92 191×28  "Customers"  font-size: 24px; font-weight: 700
 ```
 
-- **A row per element:** the selector that finds it and no other (for `shot -s`, or another `inspect`), its box as `x,y width×height` in the page's px, a bit of its text, the computed styles `--styles` asks for, and after `!` what's wrong with it as the check sees it: text cut off or spilling out, content past the frame's right edge.
+- **A row per element:** the selector that finds it and no other (for `shot -s`, or another `inspect`), its box as `x,y width×height` in the page's px, a bit of its text, the computed styles `--styles` asks for, and after `!` what's wrong with it as the check sees it: text cut off or spilling out, content past the frame's right edge, low contrast.
 - **What it lists:** without a selector, the page's outline (its landmarks, headings, tables and components), or its first two levels when it has none to speak of; with one (after the file, or `-s`), the first element it matches and what's in it, 3 levels deep (`--depth`). At most 60 rows, then how many more, so one call can't flood an agent's context.
 - **Measured by the canvas**, like the check and the shot: in your browser or one out of sight, from the files as they are on disk, in a theme with `--theme`. It exits with 1 when it can't inspect as asked (no element matches, or the file isn't a design on the canvas), 2 when it can't reach the canvas; `--json` gives the rows as data.
 

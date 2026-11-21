@@ -7,11 +7,13 @@
 //   - files the page asked for that aren't there (a stylesheet's fonts and images too);
 //   - components that weren't built, fonts that didn't load, a page that shows nothing;
 //   - layout: content cut at the frame's right edge, or below a frame of fixed height; text cut off
-//     by a box that hides what overflows it; text spilling out of its box.
+//     by a box that hides what overflows it; text spilling out of its box;
+//   - text whose colour is too close to its background's (WCAG AA), as a note: faint text can be meant.
 //
 // What a design means to do is left alone: text that ends in an ellipsis or is clamped, boxes that
 // scroll, content hidden or moved off the page on purpose.
 
+import { contrastRatio, hex, needs, over, shownRatio } from './contrast.js';
 import { themeFor, showTheme, setTheme, themesOf, inOrder } from './theme.js';
 
 const AT_ONCE = 4; // designs loading at the same time
@@ -22,6 +24,7 @@ const MOST = 5; // boxes listed for a layout problem; the rest are counted
 
 const MEDIA = 'img, svg, video, canvas, picture, iframe, embed, object, input, select, textarea, button';
 const NOT_TEXT = new Set(['script', 'style', 'noscript', 'template', 'textarea', 'option', 'title']);
+const PICTURES = new Set(['img', 'svg', 'video', 'canvas', 'picture', 'iframe', 'embed', 'object']);
 const CLIPS = new Set(['hidden', 'clip']);
 const SCROLLS = new Set(['auto', 'scroll']);
 
@@ -208,7 +211,7 @@ function addCounted(problems, problem) {
 }
 
 /** A page's measures, each taken once: an element's computed style, its box, whether it's hidden */
-function measurer(win, doc) {
+export function measurer(win, doc) {
   const cache = (measure) => {
     const known = new Map();
     return (el) => {
@@ -295,6 +298,23 @@ function readProblems(win, doc, design, { problems, resources }) {
       problems.push({ level: 'layout', kind, selector: describe(box), ...detail, ...(count > 1 ? { count } : {}) });
     }
     if (map.size > MOST) problems.push({ level: 'layout', kind, more: map.size - MOST });
+  }
+
+  // Text too close in colour to what's behind it, a note for each pair of colours, the worst first;
+  // and a note for the text over an image or a gradient, which can't be measured
+  const { low, unmeasured } = lowContrast(win, doc, measures);
+  const pairs = new Map();
+  for (const { el, text, ratio, needs: needed, color, background } of low) {
+    const key = `${color} ${background} ${needed}`;
+    if (pairs.has(key)) pairs.get(key).count++;
+    else pairs.set(key, { ratio: shownRatio(ratio), needs: needed, color, background, selector: describe(el), text, count: 1 });
+  }
+  const worst = [...pairs.values()].sort((a, b) => a.ratio - b.ratio);
+  for (const { count, ...pair } of worst.slice(0, MOST)) problems.push({ level: 'note', kind: 'contrast', ...pair, ...(count > 1 ? { count } : {}) });
+  if (worst.length > MOST) problems.push({ level: 'note', kind: 'contrast', more: worst.length - MOST });
+  if (unmeasured.length) {
+    const [{ el, text }] = unmeasured;
+    problems.push({ level: 'note', kind: 'contrast', unmeasured: true, selector: describe(el), text, ...(unmeasured.length > 1 ? { count: unmeasured.length } : {}) });
   }
 
   // A frame of fixed height cuts what goes past it (fine for a screen that scrolls, not for a flyer)
@@ -390,6 +410,171 @@ export function layoutProblems(win, doc, measures = measurer(win, doc)) {
     if (r.width > 0 && r.height > 0 && !hidden(media) && ![...ancestors(media, body)].some(keeps)) bottom = Math.max(bottom, r.bottom);
   }
   return { beyond, cut, spilled, bottom };
+}
+
+// Colours as the page computes them, in any syntax (rgb(), oklch(), color(display-p3 …)), in sRGB:
+// [r, g, b, a], read from the syntax for rgb(), else painted on a 1 × 1 canvas and read back
+const colours = new Map();
+let swatch = null;
+function rgba(colour) {
+  if (colours.has(colour)) return colours.get(colour);
+  let value;
+  const rgb = colour.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/);
+  if (rgb) {
+    const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]) / (rgb[5] ? 100 : 1);
+    value = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), alpha];
+  } else {
+    swatch ||= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
+    swatch.clearRect(0, 0, 1, 1);
+    swatch.fillStyle = '#000';
+    swatch.fillStyle = colour;
+    swatch.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = swatch.getImageData(0, 0, 1, 1).data;
+    value = [r, g, b, a / 255];
+  }
+  colours.set(colour, value);
+  return value;
+}
+
+/**
+ * The page's texts whose colour is too close to their background's for AA (`low`: { el, text, ratio,
+ * needs, color, background }), and the ones over a picture, which can't be measured (`unmeasured`:
+ * { el, text }): an image, or an image file as a background. What's behind a text is what the page
+ * shows under the middle of its first line: the boxes there, blended down to the first opaque colour,
+ * else to the page's own backdrop (the Canvas colour of its colour scheme). A gradient may put any of
+ * its stops behind the text, and the worst counts; a texture (see imageOf) doesn't count; a box
+ * between the text and its background that fades (opacity) fades the text. Left alone: text hidden, transparent, visually hidden (a box of 1 px that
+ * hides its overflow), disabled or aria-hidden, covered by something that paints (a dialog's backdrop),
+ * or outside the frame.
+ */
+export function lowContrast(win, doc, measures = measurer(win, doc)) {
+  const { style, rect, hidden, keeps } = measures;
+  const low = [];
+  const unmeasured = [];
+  const probe = doc.createElement('span');
+  probe.style.cssText = 'display: none; color: Canvas;';
+  doc.documentElement.append(probe);
+  const backdrop = rgba(style(probe).color);
+  probe.remove();
+  const paints = (box) => PICTURES.has(box.localName) || style(box).backgroundImage !== 'none' || rgba(style(box).backgroundColor)[3] > 0;
+  const tucked = (el) => {
+    for (let box = el; box && box !== doc.body; box = box.parentElement) {
+      const r = rect(box);
+      if ((r.width <= 2 || r.height <= 2) && keeps(box)) return true;
+    }
+    return false;
+  };
+  const seen = new Set();
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node.parentElement;
+    if (!node.data.trim() || !el || seen.has(el) || NOT_TEXT.has(el.localName) || hidden(el)) continue;
+    seen.add(el);
+    if (el.closest('svg, [aria-hidden="true"], :disabled, [aria-disabled="true"], [inert]')) continue;
+    const ink = rgba(style(el).webkitTextFillColor || style(el).color);
+    if (!ink[3]) continue; // transparent on purpose (a button that covers a dialog's backdrop)
+    range.selectNodeContents(node);
+    const line = [...range.getClientRects()].find((r) => r.width > 0 && r.height > 0);
+    if (!line) continue;
+    const x = line.left + line.width / 2;
+    const y = line.top + line.height / 2;
+    if (x < 0 || y < 0 || x >= win.innerWidth || y >= win.innerHeight || tucked(el)) continue;
+    const text = snippet(node.data);
+    // What the page shows there, the box on top first: what's over the text, then it and what's under it
+    const stack = doc.elementsFromPoint(x, y);
+    const at = stack.indexOf(el);
+    if (at > 0 && stack.slice(0, at).some((box) => !el.contains(box) && paints(box))) continue;
+    const under = at >= 0 ? stack.slice(at) : [el, ...ancestors(el)]; // one that takes no pointer: what's around it
+    // The boxes behind it, down to the first with a solid colour of its own: a picture among them, and
+    // it can't be measured
+    const boxes = [];
+    let picture = false;
+    for (const box of under) {
+      const own = style(box);
+      if ((PICTURES.has(box.localName) && box !== el) || imageOf(own, rect(box)).picture) {
+        picture = true;
+        break;
+      }
+      boxes.push(box);
+      if (rgba(own.backgroundColor)[3] >= 1) break;
+    }
+    if (picture) {
+      unmeasured.push({ el, text });
+      continue;
+    }
+    // What can be behind it, from the bottom up: each box's colour over what's under it, and each stop
+    // of a gradient over that (any of them may be behind the text: the worst counts)
+    let behind = [backdrop];
+    for (const box of boxes.reverse()) {
+      const own = style(box);
+      const colour = rgba(own.backgroundColor);
+      if (colour[3] > 0) behind = behind.map((under) => over(colour, under));
+      const { stops } = imageOf(own, rect(box));
+      if (stops.length) behind = [...new Map(stops.flatMap((stop) => behind.map((under) => over(stop, under))).map((c) => [hex(c), c])).values()].slice(0, 16);
+    }
+    // The boxes from the text up to the first with a background of its own fade it with their opacity
+    let fade = 1;
+    for (let box = el; box && box !== doc.documentElement; box = box.parentElement) {
+      if (paints(box)) break;
+      fade *= parseFloat(style(box).opacity);
+    }
+    let ratio = Infinity;
+    let color;
+    let background;
+    for (const under of behind) {
+      const shown = over([ink[0], ink[1], ink[2], ink[3] * fade], under);
+      const each = contrastRatio(shown, under);
+      if (each < ratio) [ratio, color, background] = [each, hex(shown), hex(under)];
+    }
+    const needed = needs(style(el).fontSize, style(el).fontWeight);
+    if (ratio < needed) low.push({ el, text, ratio, needs: needed, color, background });
+  }
+  return { low, unmeasured };
+}
+
+/** A computed list (background-image, -size, -repeat) split at its top-level commas */
+function layersOf(list) {
+  const layers = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i <= list.length; i++) {
+    const char = list[i];
+    if (char === '(') depth++;
+    else if (char === ')') depth--;
+    else if ((char === ',' && !depth) || i === list.length) {
+      layers.push(list.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  return layers;
+}
+
+/**
+ * What a box's background images put behind its text: whether one is a picture (an image file), and
+ * the colours of its gradients' stops. Only a layer that covers the box counts, repeating or as big
+ * as it: a small one is a decoration beside the text (a select's arrow, an icon, an underline). A
+ * pattern drawn in a data: URL (a button's noise) is taken as a texture that leaves the colour under
+ * it as it is.
+ */
+function imageOf(own, box) {
+  const found = { picture: false, stops: [] };
+  if (!own.backgroundImage || own.backgroundImage === 'none') return found;
+  const sizes = layersOf(own.backgroundSize || 'auto');
+  const repeats = layersOf(own.backgroundRepeat || 'repeat');
+  const covers = (size, full) => !/^[\d.]+(px|%)$/.test(size) || (size.endsWith('%') ? parseFloat(size) >= 100 : parseFloat(size) >= full - 1);
+  layersOf(own.backgroundImage).forEach((layer, i) => {
+    if (layer === 'none' || /^url\(\s*["']?data:/i.test(layer)) return;
+    const [width, height = width] = sizes[i % sizes.length].split(/\s+/);
+    const repeat = repeats[i % repeats.length].split(/\s+/);
+    const [across, down] = repeat.length === 2
+      ? repeat.map((each) => each !== 'no-repeat')
+      : [!['no-repeat', 'repeat-y'].includes(repeat[0]), !['no-repeat', 'repeat-x'].includes(repeat[0])];
+    if (!(across || covers(width, box.width)) || !(down || covers(height, box.height))) return;
+    if (/^url\(/i.test(layer)) found.picture = true;
+    else found.stops.push(...(layer.match(/(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)|#[0-9a-f]{3,8}\b/gi) || []).map(rgba));
+  });
+  return found;
 }
 
 function snippet(text) {
