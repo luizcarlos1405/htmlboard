@@ -42,6 +42,11 @@ export {
 } from './shot.js';
 
 export {
+  readState,
+  formatState
+} from './state.js';
+
+export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,

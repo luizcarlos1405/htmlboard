@@ -87,6 +87,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
+  htmlboard state [directory]                      The design selected on the canvas, the theme, the filter, the search
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -130,6 +131,9 @@ htmlboard check design
 
 # A design's table as a PNG, for an agent to look at
 htmlboard shot design/01-screens/02-customers.html -s table
+
+# The design selected on the canvas, when you say "make this one darker"
+htmlboard state design
 
 # See what moving ./design/designs.json into its files would do, then do it
 htmlboard migrate design
@@ -260,6 +264,19 @@ $ npx htmlboard shot designs/01-screens/02-customers.html -s table
 - **In a theme:** `--theme dark` shows the design in that theme, as the canvas's theme switch does (see [Themes](#-how-designs-are-found)).
 - **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design, the selector and the theme, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
 - It exits with 1 when it can't take the shot as asked (no element matches the selector, or the file isn't a design on the canvas) and 2 when it can't reach the canvas. What an image can't show, a shot can't either: other sites' images that don't allow it, pages inside the page, shadow DOM.
+
+### What you have selected: `htmlboard state`
+
+When you say "make this one darker", the agent can't see which design you mean. `htmlboard state` asks the canvas open in your browser:
+
+```text
+$ npx htmlboard state designs
+selected: 01-screens/02-customers.html (1280 × 820) · dark
+filter: desktop · search: "cust"
+```
+
+- **What it says:** the design selected on the canvas, with its size (a size variant is the same file at another size) and the theme when the theme switch has one on, then the filter and the search when they narrow the canvas.
+- **From your browser:** each tab with the canvas open tells the server what it shows whenever that changes; with several open, the one used last answers. Unlike `check` and `shot`, it starts no canvas and opens no browser, since only yours knows what you're looking at: it exits with 2 when no canvas is running for the designs, or none is open in a browser. `--json` gives it as data.
 
 ---
 
@@ -506,6 +523,16 @@ const { canvas, shot } = await runShot('./designs/home.html', { selector: '.hero
 fs.writeFileSync(shotPath(canvas.dir, shot.file, { selector: '.hero' }), shot.png);
 ```
 
+And what the canvas shows in the browser (the server answers it at `GET /api/state`; each canvas tells it at `POST /api/state`):
+
+```javascript
+import { readState, formatState } from 'htmlboard';
+
+const { open, state } = await readState('./designs'); // { port } too; throws when no canvas is open in a browser
+// → state: { selected: { file: '01-screens/02-customers.html', title, width, height }, element: null, theme: 'dark', filter: null, search: null }
+console.log(formatState(state, { open }));
+```
+
 ---
 
 ## 📂 Project Structure
@@ -526,6 +553,7 @@ htmlboard/
 │   ├── pictures.js       # Pictures of the designs: kept in .htmlboard/, which to make next
 │   ├── check.js          # `htmlboard check`: asks the canvas, prints its report
 │   ├── shot.js           # `htmlboard shot`: asks the canvas for a PNG
+│   ├── state.js          # `htmlboard state`: what the canvas shows in the browser
 │   ├── migrate.js        # `htmlboard migrate`
 │   ├── skills.js         # `htmlboard skills` installer
 │   ├── lock.js           # .htmlboard-lock.json: what the installers wrote, to update what nobody changed

@@ -13,6 +13,7 @@ import { installComponents, COMPONENTS_FOLDER, COMPONENTS_SCRIPT } from '../src/
 import { buildCatalog, formatCatalog } from '../src/catalog.js';
 import { runCheck, formatReport, hasProblems } from '../src/check.js';
 import { runShot, shotPath, ShotError } from '../src/shot.js';
+import { readState, formatState } from '../src/state.js';
 import { PORTS, findCanvases, CanvasError } from '../src/canvases.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -87,6 +88,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
+  htmlboard state [directory]                      The design selected on the canvas, the theme, the filter, the search
 
 Options:
   -p, --port <number>   Port to listen on (default: 3000)
@@ -109,6 +111,7 @@ Examples:
   htmlboard catalog designs     # What ./designs share, in a few lines (for your AI agent)
   htmlboard check designs       # Script errors, missing files, cut-off text in ./designs
   htmlboard shot designs/home.html -s .hero  # The .hero of a design, as a PNG
+  htmlboard state designs       # The design selected on the canvas (what "this" is)
 
 On the canvas:
   Drag, scroll          Move around
@@ -487,6 +490,49 @@ Options:
   }
 }
 
+async function runStateCommand(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Usage:
+  htmlboard state [directory or file] [-p <port>] [--json]
+
+Prints what the canvas running for the designs shows in the browser: the design selected (with its
+size, and the theme when the theme switch has one), the element picked in it, the filter and the
+search. For an AI agent to know what the person means by "this" or "the selected one". With several
+tabs open, the one used last.
+
+Exits with 2 when no canvas is running for the designs, or none is open in a browser.
+
+Options:
+  -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
+      --json            As JSON
+`);
+    return;
+  }
+  let port;
+  let asJson = false;
+  const targets = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--port' || arg === '-p') port = parseInt(args[++i], 10);
+    else if (arg.startsWith('--port=')) port = parseInt(arg.slice('--port='.length), 10);
+    else if (arg === '--json') asJson = true;
+    else if (arg.startsWith('-')) {
+      console.error(`[htmlboard] Unknown option: ${arg} (see htmlboard state --help)`);
+      process.exitCode = 2;
+      return;
+    } else targets.push(arg);
+  }
+  try {
+    const { canvas, open, state } = await readState(targets[0], { port });
+    if (asJson) console.log(JSON.stringify({ url: canvas.url, dir: canvas.dir, open, ...state }, null, 2));
+    else process.stdout.write(formatState(state, { open }));
+  } catch (err) {
+    console.error(err instanceof CanvasError ? err.message : `[htmlboard] ${err.message}`);
+    process.exitCode = 2;
+  }
+}
+
 function runMigrate(args) {
   const write = args.includes('--write');
   const dirArg = args.find((arg) => !arg.startsWith('-'));
@@ -574,6 +620,11 @@ async function main() {
 
   if (args[0] === 'shot') {
     await runShotCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'state') {
+    await runStateCommand(args.slice(1));
     return;
   }
 

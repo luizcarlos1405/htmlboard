@@ -83,6 +83,8 @@ const CLAIM_MS = 15000;
 const ANSWER_MS = 180000;
 /** The most a canvas's answer can weigh (a shot of a long page, as base64) */
 const ANSWER_LIMIT = 256 * 1024 * 1024;
+/** The most what a canvas shows can weigh (htmlboard state) */
+const STATE_LIMIT = 16 * 1024;
 /** How long a browser opened out of sight has to open the canvas, and stays open without requests */
 const HEADLESS_OPEN_MS = 30000;
 const HEADLESS_IDLE_MS = 60000;
@@ -307,6 +309,47 @@ export function createServer(options = {}) {
   // askCanvas, for a request that is answered whatever goes wrong
   function asking(res, ...args) {
     askCanvas(res, ...args).catch((error) => json(res, 500, { error: String(error?.message || error) }));
+  }
+
+  // What each canvas open in a browser shows (htmlboard state): the design selected, the element
+  // picked in it, the theme, the filter and the search. A canvas names its tab when it connects to the
+  // events and says what it shows whenever that changes; it's forgotten once it disconnects. The one
+  // that changed last answers.
+  const tabs = new Map(); // tab → { connections, shows: { selected, element, theme, filter, search, at } | null }
+
+  async function tellState(req, res) {
+    let said;
+    try {
+      said = await readJson(req, STATE_LIMIT);
+    } catch {
+      json(res, 400, { error: 'Not a state' });
+      return;
+    }
+    const tab = tabs.get(String(said.tab));
+    if (!tab) {
+      json(res, 409, { error: 'Not connected' }); // it says again once it has connected
+      return;
+    }
+    const text = (value, most = 200) => (typeof value === 'string' && value ? value.slice(0, most) : null);
+    const size = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.round(Number(value)) : null);
+    const { selected, element } = said;
+    tab.shows = {
+      selected: typeof selected?.file === 'string'
+        ? { file: ownFile(selected.file), title: text(selected.title), width: size(selected.width), height: size(selected.height) }
+        : null,
+      element: typeof element?.selector === 'string' ? { selector: text(element.selector, 1000), text: text(element.text) } : null,
+      theme: text(said.theme),
+      filter: text(said.filter),
+      search: text(said.search),
+      at: Date.now(),
+    };
+    res.writeHead(204).end();
+  }
+
+  function currentState() {
+    const said = [...tabs.values()].map((tab) => tab.shows).filter(Boolean).sort((a, b) => b.at - a.at);
+    const { at, ...shows } = said[0] || {};
+    return { dir: targetDir, root: rootDir, open: tabs.size, state: said.length ? shows : null };
   }
 
   // headless: the canvas claiming is the one the server opened out of sight
@@ -741,6 +784,15 @@ export function createServer(options = {}) {
       startShot(res, parsedUrl.searchParams);
       return;
     }
+    // API: what the canvases open in a browser show (htmlboard state), and each one saying so
+    if (pathname === '/api/state' && req.method === 'GET') {
+      json(res, 200, currentState());
+      return;
+    }
+    if (pathname === '/api/state' && req.method === 'POST') {
+      tellState(req, res).catch(() => json(res, 500, { error: "Couldn't take the state" }));
+      return;
+    }
     // The canvas claims a request, then answers it (at /api/check/…, a canvas from before shots)
     const answering = pathname.match(/^\/api\/(?:requests|check)\/([^/]+)(\/claim)?$/);
     if (answering && req.method === 'POST') {
@@ -806,6 +858,12 @@ export function createServer(options = {}) {
 
       res.write(`event: connected\ndata: ${JSON.stringify({ time: Date.now() })}\n\n`);
       clients.add(res);
+      // A canvas's tab, for htmlboard state (the one opened out of sight names none)
+      const tab = parsedUrl.searchParams.get('tab');
+      if (tab) {
+        if (!tabs.has(tab)) tabs.set(tab, { connections: 0, shows: null });
+        tabs.get(tab).connections++;
+      }
       for (const resolve of headless.waiting) resolve(); // requests waiting for a canvas
       headless.waiting.clear();
 
@@ -816,6 +874,7 @@ export function createServer(options = {}) {
       req.on('close', () => {
         clearInterval(heartbeat);
         clients.delete(res);
+        if (tab && tabs.has(tab) && --tabs.get(tab).connections <= 0) tabs.delete(tab);
       });
       return;
     }

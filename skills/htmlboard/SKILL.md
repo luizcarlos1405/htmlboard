@@ -91,6 +91,7 @@ Saving a design reloads its frame, saving a file designs use (a stylesheet, a co
 ## Working with the user
 
 - Put variants in separate files next to each other (`01-hero-a.html`, `02-hero-b.html`) instead of overwriting the current design, so they can be compared on the canvas. Keep the current one as the reference until the user picks.
+- When the user says "this", "this one" or "the selected design" without naming it, run `npx htmlboard state <designs folder>`: it prints the design selected on the canvas in their browser, with the theme, filter and search it shows.
 - Say which files you created or changed and what to look at; the user is watching the canvas, not the code. Link straight to a design with its file after the `#`: `http://localhost:3000/#03-checkout/02-steps.html`.
 - Before reporting back, run `npx htmlboard check <designs folder>` (or a design's file): the canvas loads each design again, in the user's browser or in one out of sight, and lists what went wrong (script errors, missing files and components, fonts that didn't load, content cut at the frame's edge, text cut off or spilling out). Fix it and run it again. A note about content below a fixed-height frame is fine for a screen that scrolls, not for a flyer. It works with no canvas running too; if it says there's no browser to run it in, ask the user to open the canvas's URL.
 - When the catalog lists themes, check every design in each: `check --themes all` (a problem found in some themes only says which), and look at one with `shot --theme dark`.

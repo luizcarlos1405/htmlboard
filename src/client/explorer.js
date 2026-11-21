@@ -38,10 +38,15 @@ const KEEP_PAGES = 20;     // pages kept loaded off screen: the ones seen last
 const LOADING_AT_ONCE = 2; // pages loading at the same time, nearest the middle of the screen first
 const DEFAULT_SIZE = [1200, 800]; // a design whose entry gives no size; without a height it grows with its page
 const FIT_HEIGHT = 100;    // a frame that fits its page however short (a component's) starts this tall
+const STATE_MS = 250;      // what the canvas shows is told to the server once it has stopped changing this long
 
 // Opened out of sight by the server (a headless browser, at /?worker) to do htmlboard check and shot
 // with no canvas open in a browser: it takes their requests and shows no designs.
 const WORKER = new URLSearchParams(location.search).has('worker');
+
+// This tab's name for the server, which keeps what each canvas open in a browser shows: the design
+// selected, the element picked in it, the theme, the filter, the search (htmlboard state)
+const TAB = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -398,6 +403,7 @@ function setCategory(category, { fitAll = true } = {}) {
   layout();
   if (fitAll) fit('all');
   askPictures();
+  tellState();
 }
 
 // The list shows what the filter and the search keep, hidden sections' designs too (faded), so they
@@ -434,6 +440,7 @@ function search(text) {
   // A new search opens the folded sections, to show what it finds
   if (!searching && state.query.length) for (const section of state.sections) section.searchCollapsed = false;
   applySearch();
+  tellState();
 }
 
 // ---------------------------------------------------------------- sections: folded in the list, hidden from the canvas
@@ -870,6 +877,26 @@ function select(design, { fit: fitIt = false, animate = true } = {}) {
   }
   if (state.selected && fitIt) fit(state.selected, { animate });
   else paintMarks();
+  tellState();
+}
+
+// What the canvas shows, told to the server once it has stopped changing (see TAB)
+let stateTimer = 0;
+function tellState() {
+  if (WORKER) return;
+  clearTimeout(stateTimer);
+  stateTimer = setTimeout(() => {
+    const { selected } = state;
+    const shows = {
+      tab: TAB,
+      selected: selected ? { file: selected.file, title: selected.title, width: selected.w, height: selected.h } : null,
+      theme: state.theme,
+      filter: state.category,
+      search: els.search.value.trim(),
+    };
+    fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(shows) })
+      .catch(() => {}); // the server is gone: it's told again once it's back
+  }, STATE_MS);
 }
 
 // #<id>, or the design's file (relative to the designs folder, with or without .html).
@@ -1420,6 +1447,7 @@ function setTheme(value) {
   paint();
   askPictures(); // the ones shown zoomed out are of the theme before, until the new ones come
   toast(value ? `Every design in ${value}` : 'Each design in its own theme');
+  tellState();
 }
 
 // The next theme, or the one before (step -1); after the last, each page's own
@@ -1653,10 +1681,11 @@ async function applyChanges() {
 }
 
 function connect() {
-  const source = new EventSource('/api/events');
+  const source = new EventSource(`/api/events?tab=${encodeURIComponent(TAB)}`);
   let lost = false;
   source.addEventListener('connected', () => {
     setLive(true);
+    tellState(); // a server that started again knows nothing of this tab
     // Back after the server stopped: files may have changed meanwhile.
     if (lost) reloadAll();
     lost = false;
@@ -2135,6 +2164,7 @@ async function start() {
   connect();
   askPictures();
   darkMode.addEventListener('change', () => askPictures()); // pages that follow the system's mode look otherwise
+  addEventListener('focus', tellState); // with several canvases open, the one used last answers htmlboard state
 }
 
 start();
