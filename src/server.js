@@ -254,9 +254,9 @@ export function createServer(options = {}) {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  // Requests to the canvas: checks (htmlboard check), shots (htmlboard shot). Each goes to the
-  // canvases open in a browser over the live reload events, as an event of its kind; the first to
-  // claim it does it, and what it posts back answers the request.
+  // Requests to the canvas: checks (htmlboard check), shots (htmlboard shot), inspections (htmlboard
+  // inspect). Each goes to the canvases open in a browser over the live reload events, as an event of
+  // its kind; the first to claim it does it, and what it posts back answers the request.
   const requests = new Map(); // id → { res, kind, answer, claimed, headless, timer }
 
   function endRequest(id, status, body) {
@@ -746,17 +746,21 @@ export function createServer(options = {}) {
       : { status: 200, body: { dir: targetDir, root: rootDir, designs: Array.isArray(report.designs) ? report.designs : [] } }));
   }
 
-  // file: a design's file from the designs folder (a variant's with its query); selector, max and
-  // scale as client/shot.js takes them. The PNG comes back as base64.
-  function startShot(res, params) {
+  // The design ?file= names, from the designs folder (a variant's with its query), else null and a 404
+  function designAsked(res, params, what) {
     const wanted = (params.get('file') || '').replace(/\\/g, '/').replace(/^\.?\/+/, '');
     const designs = canvasDesigns();
     const design = designs.find(({ file }) => ownFile(file) === wanted)
       || designs.find(({ file }) => ownFile(file).split('?')[0] === wanted);
-    if (!design) {
-      json(res, 404, { error: wanted ? `No design on the canvas is ${wanted}` : 'Say which design to shoot (?file=…)' });
-      return;
-    }
+    if (!design) json(res, 404, { error: wanted ? `No design on the canvas is ${wanted}` : `Say which design to ${what} (?file=…)` });
+    return design || null;
+  }
+
+  // file: a design's file from the designs folder (a variant's with its query); selector, max and
+  // scale as client/shot.js takes them. The PNG comes back as base64.
+  function startShot(res, params) {
+    const design = designAsked(res, params, 'shoot');
+    if (!design) return;
     const positive = (name) => {
       const value = Number(params.get(name));
       return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -767,6 +771,24 @@ export function createServer(options = {}) {
         if (shot.error && shot.kind === 'request') return { status: 422, body: { error: shot.error } };
         if (shot.error || !shot.png) return { status: 500, body: { error: `The canvas couldn't shoot ${own}: ${shot.error || 'no image'}` } };
         return { status: 200, body: { file: own, title: design.title, width: shot.width, height: shot.height, matches: shot.matches, ...(shot.theme ? { theme: shot.theme } : {}), png: shot.png } };
+      });
+  }
+
+  // file as for a shot; selector, styles (a list: font-size,gap), depth and theme as
+  // client/inspect.js takes them. Rows of the design's elements come back.
+  function startInspect(res, params) {
+    const design = designAsked(res, params, 'inspect');
+    if (!design) return;
+    const styles = (params.get('styles') || '').split(/[\s,]+/).filter((name) => /^-{0,2}[a-z][a-z0-9-]*$/i.test(name)).slice(0, 20);
+    const depth = parseInt(params.get('depth'), 10);
+    const selector = params.get('selector') || undefined;
+    const own = ownFile(design.file);
+    asking(res, 'inspect', { design, selector, styles, depth: depth >= 0 ? Math.min(depth, 10) : undefined, theme: themesAsked(params).theme },
+      (found) => {
+        if (found.error && found.kind === 'request') return { status: 422, body: { error: found.error } };
+        if (found.error || !Array.isArray(found.rows)) return { status: 500, body: { error: `The canvas couldn't inspect ${own}: ${found.error || 'no rows'}` } };
+        const { width, height, matches, kind, rows, more, theme } = found;
+        return { status: 200, body: { file: own, title: design.title, selector: selector ?? null, width, height, matches, kind, rows, more: more || 0, ...(theme ? { theme } : {}) } };
       });
   }
 
@@ -782,6 +804,11 @@ export function createServer(options = {}) {
     // API: a design, or an element of it, as a PNG (htmlboard shot), which the canvas draws
     if (pathname === '/api/shot' && req.method === 'GET') {
       startShot(res, parsedUrl.searchParams);
+      return;
+    }
+    // API: a design's elements as rows of text (htmlboard inspect), which the canvas measures
+    if (pathname === '/api/inspect' && req.method === 'GET') {
+      startInspect(res, parsedUrl.searchParams);
       return;
     }
     // API: what the canvases open in a browser show (htmlboard state), and each one saying so

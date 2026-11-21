@@ -47,6 +47,11 @@ export {
 } from './state.js';
 
 export {
+  runInspect,
+  formatInspection
+} from './inspect.js';
+
+export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,

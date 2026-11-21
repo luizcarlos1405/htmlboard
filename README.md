@@ -87,6 +87,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
+  htmlboard inspect <file> [selector]              A design's elements as text: boxes, styles, what's wrong (for your AI agent)
   htmlboard state [directory]                      The design selected on the canvas, and the element picked in it
 
 Options:
@@ -131,6 +132,9 @@ htmlboard check design
 
 # A design's table as a PNG, for an agent to look at
 htmlboard shot design/01-screens/02-customers.html -s table
+
+# Its title's box and font, as numbers
+htmlboard inspect design/01-screens/02-customers.html .page-title --styles font-size,color
 
 # The design selected on the canvas, when you say "make this one darker"
 htmlboard state design
@@ -264,6 +268,29 @@ $ npx htmlboard shot designs/01-screens/02-customers.html -s table
 - **In a theme:** `--theme dark` shows the design in that theme, as the canvas's theme switch does (see [Themes](#-how-designs-are-found)).
 - **Where it goes:** without `-o`, in a folder of your system's temporary files, one per designs folder, named after the design, the selector and the theme, so a new shot of the same replaces the last. It prints the path and the size; `--json` says it as data.
 - It exits with 1 when it can't take the shot as asked (no element matches the selector, or the file isn't a design on the canvas) and 2 when it can't reach the canvas. What an image can't show, a shot can't either: other sites' images that don't allow it, pages inside the page, shadow DOM.
+
+### A design's elements as text: `htmlboard inspect`
+
+A shot shows how a design looks; `htmlboard inspect` gives the numbers: where each element is, its size, its text, the styles you ask for, and what the check finds wrong with it. It costs a fraction of an image, and shows a design's structure without the whole file:
+
+```text
+$ npx htmlboard inspect designs/01-screens/02-customers.html
+01-screens/02-customers.html · Customers (1280 × 820): its outline (landmarks, headings, tables, components)
+app-sidebar  0,0 240×820  "⚡ Nexus Platform CORE 📊 Dashboard 👥 C…"
+  nav  16,80 207×658  "CORE 📊 Dashboard 👥 Customers 💳 Invoi…"
+main.app-main  240,0 1040×820  "Export CSV + Add Customer Customers 1,4…"
+  app-topbar  240,0 1040×64  "Export CSV + Add Customer"
+  h1.page-title  272,92 191×28  "Customers"
+  table.table  293,185 934×358  "Organization Plan Seats MRR Status AC A…"
+
+$ npx htmlboard inspect designs/01-screens/02-customers.html .page-title --styles font-size,font-weight --depth 0
+01-screens/02-customers.html · Customers (1280 × 820): .page-title
+h1.page-title  272,92 191×28  "Customers"  font-size: 24px; font-weight: 700
+```
+
+- **A row per element:** the selector that finds it and no other (for `shot -s`, or another `inspect`), its box as `x,y width×height` in the page's px, a bit of its text, the computed styles `--styles` asks for, and after `!` what's wrong with it as the check sees it: text cut off or spilling out, content past the frame's right edge.
+- **What it lists:** without a selector, the page's outline (its landmarks, headings, tables and components), or its first two levels when it has none to speak of; with one (after the file, or `-s`), the first element it matches and what's in it, 3 levels deep (`--depth`). At most 60 rows, then how many more, so one call can't flood an agent's context.
+- **Measured by the canvas**, like the check and the shot: in your browser or one out of sight, from the files as they are on disk, in a theme with `--theme`. It exits with 1 when it can't inspect as asked (no element matches, or the file isn't a design on the canvas), 2 when it can't reach the canvas; `--json` gives the rows as data.
 
 ### What you have selected: `htmlboard state`
 
@@ -526,6 +553,16 @@ const { canvas, shot } = await runShot('./designs/home.html', { selector: '.hero
 fs.writeFileSync(shotPath(canvas.dir, shot.file, { selector: '.hero' }), shot.png);
 ```
 
+A design's elements (the server answers it at `GET /api/inspect?file=<design>&selector=<css>&styles=<names>&depth=<n>`):
+
+```javascript
+import { runInspect, formatInspection } from 'htmlboard';
+
+const { inspection } = await runInspect('./designs/home.html', { selector: '.hero', styles: ['font-size', 'gap'] });
+// → inspection: { file, title, width, height, matches, kind: 'element', rows: [{ depth, selector, x, y, width, height, text, problems, styles }, …], more }
+console.log(formatInspection(inspection));
+```
+
 And what the canvas shows in the browser (the server answers it at `GET /api/state`; each canvas tells it at `POST /api/state`):
 
 ```javascript
@@ -557,6 +594,7 @@ htmlboard/
 │   ├── check.js          # `htmlboard check`: asks the canvas, prints its report
 │   ├── shot.js           # `htmlboard shot`: asks the canvas for a PNG
 │   ├── state.js          # `htmlboard state`: what the canvas shows in the browser
+│   ├── inspect.js        # `htmlboard inspect`: asks the canvas for a design's elements as rows
 │   ├── migrate.js        # `htmlboard migrate`
 │   ├── skills.js         # `htmlboard skills` installer
 │   ├── lock.js           # .htmlboard-lock.json: what the installers wrote, to update what nobody changed
@@ -567,6 +605,7 @@ htmlboard/
 │   │   ├── check.js      # Checks the designs in frames out of sight, for `htmlboard check`
 │   │   ├── shot.js       # A design, or one element, as a PNG, for `htmlboard shot`
 │   │   ├── elements.js   # An element named by a selector that finds only it (the picker, inspect)
+│   │   ├── inspect.js    # A design's elements measured: boxes, text, styles, problems, for `htmlboard inspect`
 │   │   ├── theme.js      # Themes: how a page is shown in one, and which ones its stylesheets have
 │   │   ├── picture.js    # A design as an image, drawn by the browser (copy, save, zoomed out, shots)
 │   │   ├── maker.js      # Out of sight: loads each design whose picture the server wants

@@ -8,6 +8,7 @@
 import { checkDesigns } from './check.js';
 import { selectorOf, textOf } from './elements.js';
 import { makePictures } from './maker.js';
+import { inspectDesign, InspectError } from './inspect.js';
 import { drawDesign, forgetFiles } from './picture.js';
 import { shotDesign, ShotError } from './shot.js';
 import { themeFor, showTheme, themesOf, inOrder } from './theme.js';
@@ -1812,7 +1813,7 @@ function connect() {
   });
 }
 
-// ---------------------------------------------------------------- requests from the server (htmlboard check, shot)
+// ---------------------------------------------------------------- requests from the server (htmlboard check, shot, inspect)
 
 let working = Promise.resolve();
 
@@ -1828,7 +1829,7 @@ async function take(request, run) {
 }
 
 function listenForRequests(source) {
-  for (const [kind, run] of [['check', runCheck], ['shot', runShot]]) {
+  for (const [kind, run] of [['check', runCheck], ['shot', runShot], ['inspect', runInspect]]) {
     source.addEventListener(kind, (event) => {
       try {
         take(JSON.parse(event.data), run);
@@ -1889,6 +1890,18 @@ async function runShot({ id, ...request }) {
   }
   if (!await answer(id, shot)) return;
   toast(shot.error ? `Couldn't shoot ${what}: ${shot.error}` : `Shot ${what} (${shot.width} × ${shot.height})`);
+}
+
+async function runInspect({ id, ...request }) {
+  const what = `${request.design.title || request.design.file}${request.selector ? ` (${request.selector})` : ''}`;
+  let found;
+  try {
+    found = await inspectDesign(request);
+  } catch (err) {
+    found = { error: String(err?.message || err), ...(err instanceof InspectError ? { kind: 'request' } : {}) };
+  }
+  if (!await answer(id, found)) return;
+  toast(found.error ? `Couldn't inspect ${what}: ${found.error}` : `Inspected ${what}`);
 }
 
 function setLive(on) {

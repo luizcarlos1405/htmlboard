@@ -156,7 +156,7 @@ async function checkDesign(design, box, { theme = null, find = null } = {}) {
     }
     if (find) result.found = themesOf(page.doc, find);
     if (!page.finished) result.problems.push({ level: 'error', kind: 'timeout', seconds: LOAD_MS / 1000 });
-    inspect(page.win, page.doc, design, result);
+    readProblems(page.win, page.doc, design, result);
   } catch (error) {
     result.problems.push({ level: 'error', kind: 'check', message: String(error?.message || error) });
   } finally {
@@ -207,8 +207,8 @@ function addCounted(problems, problem) {
   else problems.push(Object.defineProperty({ ...problem }, 'key', { value: key }));
 }
 
-function inspect(win, doc, design, { problems, resources }) {
-  const body = doc.body;
+/** A page's measures, each taken once: an element's computed style, its box, whether it's hidden */
+function measurer(win, doc) {
   const cache = (measure) => {
     const known = new Map();
     return (el) => {
@@ -225,6 +225,13 @@ function inspect(win, doc, design, { problems, resources }) {
   });
   // A box that hides or scrolls what overflows it
   const keeps = (el) => style(el).overflowX !== 'visible' || style(el).overflowY !== 'visible';
+  return { style, rect, hidden, keeps };
+}
+
+function readProblems(win, doc, design, { problems, resources }) {
+  const body = doc.body;
+  const measures = measurer(win, doc);
+  const { rect, hidden } = measures;
 
   // What the probe noted while the page built
   const loads = new Set();
@@ -278,8 +285,35 @@ function inspect(win, doc, design, { problems, resources }) {
     return;
   }
 
-  // Content cut at the right edge: the outermost boxes that cross it (or, in the page's flow, start
-  // past it) with something to see in them. A box that hides or scrolls its overflow keeps it inside.
+  const { beyond, cut, spilled, bottom } = layoutProblems(win, doc, measures);
+  if (beyond.length) {
+    const elements = beyond.slice(0, MOST).map(({ el, right }) => ({ selector: el === body ? 'body' : describe(el), right }));
+    problems.push({ level: 'layout', kind: 'beyond', frame: win.innerWidth, elements, ...(beyond.length > MOST ? { more: beyond.length - MOST } : {}) });
+  }
+  for (const [map, kind] of [[cut, 'cut'], [spilled, 'spill']]) {
+    for (const [box, { count, ...detail }] of [...map].slice(0, MOST)) {
+      problems.push({ level: 'layout', kind, selector: describe(box), ...detail, ...(count > 1 ? { count } : {}) });
+    }
+    if (map.size > MOST) problems.push({ level: 'layout', kind, more: map.size - MOST });
+  }
+
+  // A frame of fixed height cuts what goes past it (fine for a screen that scrolls, not for a flyer)
+  if (design.height && bottom > win.innerHeight + 1) {
+    problems.push({ level: 'note', kind: 'below', bottom: Math.round(bottom), frame: win.innerHeight });
+  }
+}
+
+/**
+ * Where a page's layout goes wrong, by element: the outermost boxes that cross the frame's right edge
+ * (or, in the page's flow, start past it) with something to see in them (`beyond`: { el, right }); the
+ * boxes that cut text off (`cut`: box → { overflow, text, count }) and the ones text spills out of
+ * (`spilled`: box → { text, count }); and where the content that no box keeps inside ends (`bottom`).
+ */
+export function layoutProblems(win, doc, measures = measurer(win, doc)) {
+  const { style, rect, hidden, keeps } = measures;
+  const body = doc.body;
+
+  // Content cut at the right edge: a box that hides or scrolls its overflow keeps it inside
   const width = win.innerWidth;
   const beyond = [];
   const hasContent = (el) => el.matches(MEDIA) || Boolean(el.querySelector(MEDIA)) || Boolean(el.innerText?.trim());
@@ -291,17 +325,14 @@ function inspect(win, doc, design, { problems, resources }) {
       const crosses = r.left < width - 1 && r.right > width + 1;
       const past = r.left >= width && s.position === 'static' && s.transform === 'none';
       if ((crosses || past) && r.width > 0 && r.height > 0 && !hidden(child) && hasContent(child)) {
-        beyond.push({ selector: describe(child), right: Math.round(r.right) });
+        beyond.push({ el: child, right: Math.round(r.right) });
       } else if (s.overflowX === 'visible') {
         visit(child);
       }
     }
   };
-  if (rect(body).right > width + 1 && hasContent(body)) beyond.push({ selector: 'body', right: Math.round(rect(body).right) });
+  if (rect(body).right > width + 1 && hasContent(body)) beyond.push({ el: body, right: Math.round(rect(body).right) });
   else visit(body);
-  if (beyond.length) {
-    problems.push({ level: 'layout', kind: 'beyond', frame: width, elements: beyond.slice(0, MOST), ...(beyond.length > MOST ? { more: beyond.length - MOST } : {}) });
-  }
 
   // Text: cut off by a box that hides what overflows it, or spilling out of its box. Each text is
   // measured against the boxes around it, from the nearest, up to the first it doesn't fit in (or one
@@ -358,17 +389,7 @@ function inspect(win, doc, design, { problems, resources }) {
     const r = rect(media);
     if (r.width > 0 && r.height > 0 && !hidden(media) && ![...ancestors(media, body)].some(keeps)) bottom = Math.max(bottom, r.bottom);
   }
-  for (const [map, kind] of [[cut, 'cut'], [spilled, 'spill']]) {
-    for (const [box, { count, ...detail }] of [...map].slice(0, MOST)) {
-      problems.push({ level: 'layout', kind, selector: describe(box), ...detail, ...(count > 1 ? { count } : {}) });
-    }
-    if (map.size > MOST) problems.push({ level: 'layout', kind, more: map.size - MOST });
-  }
-
-  // A frame of fixed height cuts what goes past it (fine for a screen that scrolls, not for a flyer)
-  if (design.height && bottom > win.innerHeight + 1) {
-    problems.push({ level: 'note', kind: 'below', bottom: Math.round(bottom), frame: win.innerHeight });
-  }
+  return { beyond, cut, spilled, bottom };
 }
 
 function snippet(text) {

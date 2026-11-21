@@ -14,6 +14,7 @@ import { buildCatalog, formatCatalog } from '../src/catalog.js';
 import { runCheck, formatReport, hasProblems } from '../src/check.js';
 import { runShot, shotPath, ShotError } from '../src/shot.js';
 import { readState, formatState } from '../src/state.js';
+import { runInspect, formatInspection, InspectError } from '../src/inspect.js';
 import { PORTS, findCanvases, CanvasError } from '../src/canvases.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -88,6 +89,7 @@ Usage:
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
+  htmlboard inspect <file> [selector]              A design's elements as text: boxes, styles, what's wrong (for your AI agent)
   htmlboard state [directory]                      The design selected on the canvas, and the element picked in it
 
 Options:
@@ -111,6 +113,7 @@ Examples:
   htmlboard catalog designs     # What ./designs share, in a few lines (for your AI agent)
   htmlboard check designs       # Script errors, missing files, cut-off text in ./designs
   htmlboard shot designs/home.html -s .hero  # The .hero of a design, as a PNG
+  htmlboard inspect designs/home.html .hero --styles font-size,gap  # The .hero's boxes and styles, as text
   htmlboard state designs       # The design selected on the canvas (what "this" is)
 
 On the canvas:
@@ -491,6 +494,90 @@ Options:
   }
 }
 
+async function runInspectCommand(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Usage:
+  htmlboard inspect <file> [selector] [--styles <names>] [--depth <n>] [--theme <name>] [-p <port>] [-r <root>] [--json]
+
+Prints a design's elements as text, one row each, for an AI agent to read sizes, positions and gaps
+as numbers, and a design's structure without reading the whole file: the selector that finds the
+element (for shot -s), its box (x,y width×height, in the page's px), a bit of its text, the computed
+styles asked for, and what went wrong with it as htmlboard check sees it (text cut off or spilling
+out, content past the frame's edge).
+
+With a selector, that element and what's in it, 3 levels deep; without one, the page's outline: its
+landmarks, headings, tables and components. At most 60 rows, then how many more.
+
+The canvas running for the designs measures them in a browser, from the files as they are now: as
+for htmlboard check, one out of sight when none is open, and with no canvas running, it starts one.
+
+Exits with 1 when it can't inspect as asked (no element matches, the file isn't a design on the
+canvas), 2 when it can't reach the canvas.
+
+Options:
+  -s, --selector <css>  That element and what's in it (or give it after the file)
+      --styles <names>  Computed styles to give for each element: --styles font-size,gap,color
+      --depth <n>       Levels below the element (default 3)
+      --theme <name>    In this theme (as the canvas's theme switch shows it; default: the page's own)
+  -p, --port <number>   The canvas's port (default: found on 3000 to 3020)
+  -r, --root <path>     With no canvas running: serve files from this folder, as htmlboard --root
+      --json            The rows as JSON
+`);
+    return;
+  }
+  let port;
+  let root;
+  let theme;
+  let selector;
+  let styles;
+  let depth;
+  let asJson = false;
+  const targets = [];
+  const value = (i) => (args[i] === undefined || args[i].startsWith('--') ? null : args[i]);
+  const usage = (message) => {
+    console.error(`[htmlboard] ${message} (see htmlboard inspect --help)`);
+    process.exitCode = 2;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const [flag, inline] = arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, null];
+    const take = () => inline ?? value(++i);
+    if (flag === '--port' || flag === '-p') port = parseInt(take(), 10);
+    else if (flag === '--root' || flag === '-r') root = take();
+    else if (flag === '--theme') theme = take();
+    else if (flag === '--selector' || flag === '-s') selector = take();
+    else if (flag === '--styles') styles = take();
+    else if (flag === '--depth') depth = take();
+    else if (flag === '--json') asJson = true;
+    else if (arg.startsWith('-')) return usage(`Unknown option: ${arg}`);
+    else targets.push(arg);
+  }
+  if (!targets.length) return usage('Say which design to inspect');
+  if (targets.length > 2 || (targets.length === 2 && selector !== undefined)) return usage(`One design and one selector at a time: ${targets.join(', ')}`);
+  if (targets.length === 2) selector = targets[1];
+  if (selector === null || selector === '') return usage('--selector needs a CSS selector');
+  if (root === null || root === '') return usage('--root needs a folder');
+  if (theme === null || theme === '') return usage('--theme needs a theme');
+  if (styles === null || styles === '') return usage('--styles needs the names of styles: --styles font-size,gap');
+  if (depth !== undefined && !/^\d+$/.test(String(depth))) return usage('--depth needs a number of levels');
+  try {
+    const { inspection } = await runInspect(targets[0], {
+      selector,
+      styles: styles ? styles.split(/[\s,]+/).filter(Boolean) : undefined,
+      depth: depth !== undefined ? Number(depth) : undefined,
+      theme,
+      port,
+      root,
+    });
+    if (asJson) console.log(JSON.stringify(inspection, null, 2));
+    else process.stdout.write(formatInspection(inspection));
+  } catch (err) {
+    console.error(err instanceof CanvasError || err instanceof InspectError ? err.message : `[htmlboard] ${err.message}`);
+    process.exitCode = err instanceof InspectError ? 1 : 2;
+  }
+}
+
 async function runStateCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
@@ -626,6 +713,11 @@ async function main() {
 
   if (args[0] === 'state') {
     await runStateCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'inspect') {
+    await runInspectCommand(args.slice(1));
     return;
   }
 
