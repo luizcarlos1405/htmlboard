@@ -69,6 +69,7 @@ Put what the designs share in one stylesheet instead of repeating it in every fi
 - A design's own `<style>` holds only what is specific to it. When a second design needs the same thing, move it to `styles.css`. Split it when it grows (`forms.css`, `charts.css`) and link the extra files where they are used.
 - Editing `styles.css` restyles every design that links it, which is the point for a product's screens. For one-off explorations that should keep their look (a different style, logo options), style them in their own file instead.
 - Themes need no variants: the canvas's theme switch shows every design in a theme its stylesheets have, `[data-theme="dark"]` rules (the attribute on `<html>`) or the system's light and dark (`prefers-color-scheme`, `light-dark()`). For another attribute, or classes on `<html>`, say so in designs.json (htmlboard-designs-json skill).
+- When a design needs icons, draw them from the designs folder's sprite, `<svg class="icon"><use href="../icons.svg#name"/></svg>`, sized in CSS, rather than writing SVG paths: use the names the catalog lists, and add others with `npx htmlboard icons add <names> -d <designs folder>` (Lucide's names: https://lucide.dev/icons; it says which ones don't exist and names close ones).
 
 ## Components
 

@@ -192,7 +192,7 @@ a[href$=".pdf"], .doc-link::after { content: "{.not-a-class}" }
     assert.equal(formatCatalog(buildCatalog(dir), { name: 'plain' }), 'plain: no designs yet.\n');
     fs.writeFileSync(path.join(dir, 'one.html'), '<!DOCTYPE html><title>One</title><style>p { color: red }</style>');
     assert.equal(formatCatalog(buildCatalog(dir), { name: 'plain' }),
-      'plain: 1 design.\n\nNothing shared yet: no stylesheet, script or component.\n');
+      'plain: 1 design.\n\nNothing shared yet: no stylesheet, script, icon or component.\n');
   });
 
   test('CLI: htmlboard catalog <dir>', () => {

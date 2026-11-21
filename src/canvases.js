@@ -104,7 +104,7 @@ export async function askCanvas(canvas, request, what) {
 }
 
 // What a designs folder has at its top, and its sections don't
-const DESIGNS_FOLDER_MARKS = ['designs.json', 'styles.css', 'components.js', 'components'];
+const DESIGNS_FOLDER_MARKS = ['designs.json', 'styles.css', 'components.js', 'components', 'icons.svg'];
 
 /**
  * The designs folder a path is in, when no canvas says so: the nearest folder at or above it (not

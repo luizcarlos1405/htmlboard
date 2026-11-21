@@ -52,6 +52,14 @@ export {
 } from './inspect.js';
 
 export {
+  addIcons,
+  formatIcons,
+  symbolOf,
+  SPRITE,
+  SETS
+} from './icons.js';
+
+export {
   installSkills,
   uninstallSkills,
   SKILLS_DIR,

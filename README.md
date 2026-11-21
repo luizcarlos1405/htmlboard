@@ -84,6 +84,7 @@ Usage:
   htmlboard skills <install|uninstall> [options]   Teach your AI agent to use HtmlBoard
   htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
+  htmlboard icons add <names> [-d <directory>]     Add icons by name (Lucide) to the designs' icons.svg
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
@@ -221,6 +222,7 @@ It describes whatever the project has and asks for nothing:
 - **Stylesheets** with any name, in any folder: the ones the designs link or `@import` (CDN ones by their URL), and the ones at the top of the folder that no design links yet.
 - **Variables** under the selector that declares them, so a dark theme's values show too.
 - **Components**: their attributes come from their markup (`{{name}}`), their script and their CSS (`&[warn]` is a flag, `&[size="lg"]` a value).
+- **Icons**: the names in the sprites the designs draw from (`<use href="icons.svg#name">`), and in an `icons.svg` at the top of the folder that no design uses yet; for a sprite of more than 100, the ones the designs use (see [Icons](#-icons)).
 
 On the samples it is 2 KB instead of the 9 KB of `styles.css` and `components/`, and the gap grows with the project: a stylesheet's rules don't show, only what they define.
 
@@ -251,7 +253,7 @@ Checked 6 designs in designs (the canvas at http://localhost:3000): 2 with probl
 - **Contrast is a note**, so it doesn't fail the check: muted text and brand colors are often meant, and a design may keep them. What's behind a text is what the page shows under it: the boxes there, blended down to a solid color (translucent ones and opacity count, and so does the page's own light or dark backdrop), or the worst stop of a gradient. Left alone: disabled and `aria-hidden` text, text hidden on purpose (transparent, or visually hidden for screen readers), text under a dialog's backdrop, and small decorations beside it (a select's arrow, an icon). Text over a photo can't be measured: a note says which, for a look with `shot`. Each pair of colors is one line, the worst first.
 - **What it leaves alone:** what a design means to do, such as text that ends in an ellipsis or is clamped, boxes that scroll, and content hidden or moved off the page on purpose. It doesn't judge looks (spacing, alignment, which colors), only measures contrast.
 - **It runs in a browser**: the one the canvas is open in, or with none open (a background session, nobody at the computer), one the canvas opens out of sight: Chrome, Chromium or Edge, else Firefox, headless. `HTMLBOARD_BROWSER=<path>` names another, `HTMLBOARD_BROWSER=none` turns this off. It quits after a minute without checks, shots or pictures to make (see **Zoomed out, pictures**), and when the canvas stops. Nothing is downloaded: the browser only opens the canvas's page, which does the work.
-- **With no canvas running** for the designs (CI, a fresh worktree), the check starts one for itself, out of sight, and stops it when it's done. That one serves the designs folder (the nearest folder above the file with a `designs.json`, `styles.css`, `components.js` or `components/`), so if the designs link files outside it, add `--root <folder>` as you would to the canvas; the report says so when files are missing.
+- **With no canvas running** for the designs (CI, a fresh worktree), the check starts one for itself, out of sight, and stops it when it's done. That one serves the designs folder (the nearest folder above the file with a `designs.json`, `styles.css`, `components.js`, `components/` or `icons.svg`), so if the designs link files outside it, add `--root <folder>` as you would to the canvas; the report says so when files are missing.
 - Each check loads the files as they are on disk, so it can run right after a save. Pages shown in frames get a small script first in their `<head>` (`/__explorer/probe.js`) to hear what goes wrong from the start, and to set the theme they're shown in before their own scripts run; it only listens in the frames the check loads, and a design opened on its own doesn't get it.
 - A file or a folder checks just those designs: `htmlboard check designs/01-screens/02-customers.html`. It finds the canvas on ports 3000 to 3020 (`-p` for another) and exits with 1 when there are problems, 2 when it can't check. `--json` gives the report as data.
 - **In themes:** `--theme dark` checks the designs in that theme; `--themes all` checks each one in its default and in every theme it has (`--themes light,dark`: in those), and a problem found in some of them only says which: `layout [dark] text spills out of .btn: "Confirm"`. Without either, a design is checked in its own theme, in the system's light mode, so the check sees the same on any computer.
@@ -397,6 +399,28 @@ A component is a piece of HTML, `components/tx-item.html`:
 
 ---
 
+## 🔣 Icons
+
+Designs can draw their icons by name from one sprite at the top of the designs folder, instead of each drawing its own SVG:
+
+```text
+$ npx htmlboard icons add users search chevrons-up-down -d designs
+  ✓ added users, search, chevrons-up-down to designs/icons.svg (Lucide 1.77.0)
+
+  Draw one as <svg class="icon"><use href="icons.svg#users"/></svg> (../icons.svg from a folder in it), sized in CSS.
+```
+
+```html
+<svg class="icon"><use href="../icons.svg#users"/></svg>
+```
+
+- **From [Lucide](https://lucide.dev/icons)**, about 2,400 icons: each is fetched once from the set's package on a CDN (`lucide-static`) and kept in `icons.svg` as a `<symbol>` with the set's own `viewBox`, stroke and fill, so it takes the text's color. Size it in CSS (`.icon { width: 1.25em; height: 1.25em; }`).
+- **Only adding needs the network:** the designs then work offline, and images and pictures of them keep their icons. Icons already in the sprite are kept, new ones go after them, and the sprite notes the set, its version and its license. A sprite you made yourself works too.
+- **A wrong name is said**, with names close to it: `there is no user-add in Lucide: user-plus, user-round-plus, users?`. It exits with 1 then (the other icons are added), 2 when it can't add them (no network, a name that isn't one).
+- **`htmlboard catalog` lists the icons** of every sprite the designs draw from (`<use href="…#name">`, whatever the file), so an agent reuses them instead of drawing new ones; for a big sprite (Lucide's whole set from `node_modules`), the ones in use. **`htmlboard check`** says when a design draws an icon its sprite doesn't have: `missing icon: icons.svg#user-plus2 (<use>)`.
+
+---
+
 ## 📋 `designs.json` (Optional)
 
 A `designs.json` in the folder curates the canvas when folders aren't enough: section titles with accents and capitals, an order across folders, a name or size the file doesn't give. The files still say the rest:
@@ -509,6 +533,16 @@ installSkills({ dir: process.cwd(), agent: 'all' });
 
 The status is `installed`, `updated`, `unchanged` or `skipped`. A skipped skill has a `reason`: `edited` (changed locally), `unrecorded` (its `.htmlboard-lock.json` is missing, so it can't tell) or `newer` (a newer HtmlBoard installed it).
 
+And so is adding icons (fetched from the set's package on a CDN):
+
+```javascript
+import { addIcons, formatIcons } from 'htmlboard';
+
+const result = await addIcons(['users', 'search'], { dir: './designs' }); // { set: 'lucide' } is the default
+// → { path: '…/designs/icons.svg', added: ['users', 'search'], had: [], unknown: [], set: 'lucide', version: '1.77.0' }
+process.stdout.write(formatIcons(result));
+```
+
 And so is the components installer:
 
 ```javascript
@@ -588,6 +622,7 @@ htmlboard/
 │   ├── server.js         # HTTP server, SSE live reload
 │   ├── designs.js        # Which designs a folder holds: files, their tags, designs.json
 │   ├── components.js     # Components: their previews, `htmlboard components`
+│   ├── icons.js          # `htmlboard icons add`: icons by name in the designs' icons.svg
 │   ├── catalog.js        # What the designs share: `htmlboard catalog`
 │   ├── canvases.js       # The canvases running on this machine, asking one, starting one for a command
 │   ├── browser.js        # A browser to open the canvas in out of sight (headless)

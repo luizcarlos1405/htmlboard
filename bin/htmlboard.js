@@ -15,6 +15,7 @@ import { runCheck, formatReport, hasProblems } from '../src/check.js';
 import { runShot, shotPath, ShotError } from '../src/shot.js';
 import { readState, formatState } from '../src/state.js';
 import { runInspect, formatInspection, InspectError } from '../src/inspect.js';
+import { addIcons, formatIcons, IconsError, SETS, SPRITE } from '../src/icons.js';
 import { PORTS, findCanvases, CanvasError } from '../src/canvases.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -86,6 +87,7 @@ Usage:
   htmlboard skills <install|uninstall> [options]   Teach your AI agent to use HtmlBoard
   htmlboard migrate [directory] [--write]          Move designs.json's sizes, titles and variants into the files
   htmlboard components [directory] [--force]       Add components.js: files in components/ become custom elements
+  htmlboard icons add <names> [-d <directory>]     Add icons by name (Lucide) to the designs' icons.svg
   htmlboard catalog [directory]                    What the designs share: stylesheets, scripts, components
   htmlboard check [directory or file] [-p <port>]  What went wrong in the designs, as the canvas sees them in a browser
   htmlboard shot <file> [-s <selector>] [--max <px>]  A design, or one element of it, as a PNG (for your AI agent)
@@ -110,6 +112,7 @@ Examples:
   htmlboard --init              # Add sample designs to the current folder
   htmlboard skills install      # Add the HtmlBoard skills to this project's agents
   htmlboard components designs  # Let ./designs use components (components/tx-item.html is <tx-item>)
+  htmlboard icons add users search -d designs  # Two Lucide icons in ./designs/icons.svg
   htmlboard catalog designs     # What ./designs share, in a few lines (for your AI agent)
   htmlboard check designs       # Script errors, missing files, cut-off text in ./designs
   htmlboard shot designs/home.html -s .hero  # The .hero of a design, as a PNG
@@ -495,6 +498,66 @@ Options:
   }
 }
 
+function showIconsHelp() {
+  console.log(`
+Usage:
+  htmlboard icons add <names> [--set <name>] [-d <designs folder>] [--json]
+
+Adds icons by name to the sprite at the top of the designs folder (${SPRITE}, made if missing),
+each a <symbol> as the set draws it (its viewBox, stroke and fill). Icons it has already are kept.
+Designs draw one as:
+
+  <svg class="icon"><use href="../${SPRITE}#users"/></svg>
+
+sized in CSS (.icon { width: 1.25em; height: 1.25em; }). Each icon comes from the set's package on a
+CDN, so adding needs the network; the designs then work offline. The sprite notes the set, its
+version and its license. A name the set doesn't have is said, with names close to it.
+
+Exits with 1 when a name isn't in the set (the others are added), 2 when it can't add them.
+
+Options:
+      --set <name>      The icon set: ${Object.keys(SETS).join(', ')} (default: lucide, ${SETS.lucide.site})
+  -d, --dir <path>      The designs folder (default: the current directory)
+      --json            What it did as JSON
+`);
+}
+
+async function runIcons(args) {
+  const [action, ...rest] = args;
+  if (!action || action === '--help' || action === '-h' || rest.includes('--help') || rest.includes('-h')) return showIconsHelp();
+  const usage = (message) => {
+    console.error(`[htmlboard] ${message} (see htmlboard icons --help)`);
+    process.exitCode = 2;
+  };
+  if (action !== 'add') return usage(`Unknown command: icons ${action}`);
+  let dir = process.cwd();
+  let set = 'lucide';
+  let asJson = false;
+  const names = [];
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === '--dir' || arg === '-d') dir = rest[++i];
+    else if (arg.startsWith('--dir=')) dir = arg.slice('--dir='.length);
+    else if (arg === '--set') set = rest[++i];
+    else if (arg.startsWith('--set=')) set = arg.slice('--set='.length);
+    else if (arg === '--json') asJson = true;
+    else if (arg.startsWith('-')) return usage(`Unknown option: ${arg}`);
+    else names.push(arg);
+  }
+  if (!names.length) return usage('Say which icons to add: htmlboard icons add users search');
+  if (!dir) return usage('--dir needs a folder');
+  if (!set) return usage('--set needs a set');
+  try {
+    const result = await addIcons(names, { dir, set });
+    if (asJson) console.log(JSON.stringify(result, null, 2));
+    else process.stdout.write(formatIcons(result, { name: shownPath(result.path) }));
+    if (result.unknown.length) process.exitCode = 1;
+  } catch (err) {
+    console.error(err instanceof IconsError ? `[htmlboard] ${err.message}` : `[htmlboard] ${err.message}`);
+    process.exitCode = 2;
+  }
+}
+
 async function runInspectCommand(args) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
@@ -719,6 +782,11 @@ async function main() {
 
   if (args[0] === 'inspect') {
     await runInspectCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'icons') {
+    await runIcons(args.slice(1));
     return;
   }
 

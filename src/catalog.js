@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { COMPONENTS_FOLDER, isPage, isTagName } from './components.js';
 import { attributes, scanDesigns, normalizeThemes } from './designs.js';
+import { SPRITE, symbolsOf } from './icons.js';
 
 // The catalog: what the designs in a folder share, read from the files every time, so it is never
 // out of date. It describes whatever the project has and asks for none of it:
@@ -9,6 +10,8 @@ import { attributes, scanDesigns, normalizeThemes } from './designs.js';
 //   - the stylesheets the designs link, whatever their name or folder (and the ones at the top of
 //     the folder, linked or not yet), with each local one's variables, classes, @keyframes and fonts;
 //   - the scripts the designs load;
+//   - the icons in the sprites they draw from (<use href="icons.svg#name">), and an icons.svg at the
+//     top of the folder, so the names that exist get reused;
 //   - the components in components/, with their attributes, slots, example and where they're used;
 //   - the themes the designs have (as designs.json or the designs say, else as their stylesheets do).
 //
@@ -19,6 +22,7 @@ const WIDTH = 100; // the text wraps here
 const LONGEST_VALUE = 120; // a variable's value is cut after this many characters
 const MOST_ITEMS = 200; // a stylesheet's classes or variables shown; the rest are counted
 const MOST_NAMED = 3; // designs named; more are counted
+const MOST_ICONS = 100; // a sprite with more icons lists the ones the designs use
 
 const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
@@ -203,19 +207,25 @@ function inOrder(values) {
 
 // ---------------------------------------------------------------- pages and components
 
-/** What a page or a component loads: its <link rel="stylesheet">s, <script src>s and <style> @imports */
+/**
+ * What a page or a component loads: its <link rel="stylesheet">s, <script src>s and <style> @imports,
+ * and the icons it draws from sprites (<use href="icons.svg#name">)
+ */
 function loads(html) {
   html = html.replace(/<!--[\s\S]*?-->/g, '');
   const stylesheets = [];
   const scripts = [];
+  const icons = [];
   const tags = html.replace(/(<(script|style)\b[^>]*>)[\s\S]*?<\/\2\s*>/gi, '$1');
-  for (const [tag, name] of tags.matchAll(/<(link|script)\b[^>]*>/gi)) {
+  for (const [tag, name] of tags.matchAll(/<(link|script|use)\b[^>]*>/gi)) {
     const attrs = attributes(tag);
-    if (name.toLowerCase() === 'link' && /\bstylesheet\b/i.test(attrs.rel || '') && attrs.href) stylesheets.push(attrs.href);
-    else if (name.toLowerCase() === 'script' && attrs.src) scripts.push(attrs.src);
+    const kind = name.toLowerCase();
+    if (kind === 'link' && /\bstylesheet\b/i.test(attrs.rel || '') && attrs.href) stylesheets.push(attrs.href);
+    else if (kind === 'script' && attrs.src) scripts.push(attrs.src);
+    else if (kind === 'use' && (attrs.href || attrs['xlink:href'])) icons.push(attrs.href || attrs['xlink:href']);
   }
   for (const [, css] of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) stylesheets.push(...importsOf(parseCss(css)));
-  return { stylesheets, scripts };
+  return { stylesheets, scripts, icons };
 }
 
 const ATTRIBUTE_SELECTOR = /\[\s*([\w-]+)\s*(?:[~|^$*]?=\s*(?:"([^"]*)"|'([^']*)'|([^\s\]]+))(?:\s+[is])?)?\s*\]/gi;
@@ -269,8 +279,9 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * @param {object} [options]
  * @param {string} [options.root] The folder the server serves from (`--root`), for links that
  *   start with "/" (default: the designs folder)
- * @returns {{dir: string, designs: string[], stylesheets: object[], scripts: object[], components: object[]}}
- *   Paths are from the designs folder. Each stylesheet, script and component has its `users`:
+ * @returns {{dir: string, designs: string[], stylesheets: object[], scripts: object[], icons: object[], components: object[]}}
+ *   Paths are from the designs folder. Each sprite in `icons` has its icons and the ones `used`. Each
+ *   stylesheet, script, sprite and component has its `users`:
  *   `{ design }` (a file), `{ component }` (a tag) or `{ stylesheet }` (one that @imports it).
  */
 export function buildCatalog(dir = process.cwd(), { root } = {}) {
@@ -330,14 +341,39 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
     addUser(scripts.get(where.key), user);
   };
 
+  // Sprites: the icons in each (its symbols, else whatever has an id), and the ones the designs use
+  const sprites = new Map();
+  const addSprite = (where, user) => {
+    if (!where || where.external) return null;
+    if (!sprites.has(where.key)) {
+      const svg = read(where.file);
+      const entry = { path: where.path, icons: [], used: new Set(), users: [] };
+      if (svg === null) entry.missing = true;
+      else {
+        const symbols = symbolsOf(svg);
+        entry.icons = symbols.length ? symbols : [...svg.matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map((m) => m[1]);
+      }
+      sprites.set(where.key, entry);
+    }
+    const entry = sprites.get(where.key);
+    if (user) addUser(entry, user);
+    return entry;
+  };
+  const addIcon = (href, from, user) => {
+    const hash = href.indexOf('#');
+    if (hash <= 0) return; // in the page itself, or no name
+    addSprite(locate(href.slice(0, hash), from), user)?.used.add(href.slice(hash + 1));
+  };
+
   const scanned = scanDesigns(designsDir);
   const designs = scanned.filter((design) => !design.variantOf).map((design) => design.file);
   const pages = designs.map((file) => {
     const full = path.join(designsDir, file);
     const html = (read(full) ?? '').replace(/<!--[\s\S]*?-->/g, '');
-    const { stylesheets: hrefs, scripts: srcs } = loads(html);
+    const { stylesheets: hrefs, scripts: srcs, icons } = loads(html);
     for (const href of hrefs) addStylesheet(locate(href, full), { design: file });
     for (const src of srcs) addScript(locate(src, full), { design: file });
+    for (const href of icons) addIcon(href, full, { design: file });
     return [file, html];
   });
 
@@ -358,9 +394,10 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
     const { markup, ...usage } = readComponent(source);
     components.push({ tag, file: `${COMPONENTS_FOLDER}/${name}`, ...usage, users: [] });
     markups.set(tag, markup);
-    const { stylesheets: hrefs, scripts: srcs } = loads(source);
+    const { stylesheets: hrefs, scripts: srcs, icons } = loads(source);
     for (const href of hrefs) addStylesheet(locate(href, full), { component: tag });
     for (const src of srcs) addScript(locate(src, full), { component: tag });
+    for (const href of icons) addIcon(href, full, { component: tag });
   }
   for (const component of components) {
     const used = new RegExp(`<${escapeRegExp(component.tag)}[\\s/>]`, 'i');
@@ -374,12 +411,15 @@ export function buildCatalog(dir = process.cwd(), { root } = {}) {
     .map((entry) => entry.name)
     .sort(byName);
   for (const name of top) addStylesheet({ key: path.join(designsDir, name), path: name, file: path.join(designsDir, name) });
+  // And so is the sprite htmlboard icons add makes there
+  if (fs.existsSync(path.join(designsDir, SPRITE))) addSprite({ key: path.join(designsDir, SPRITE), path: SPRITE, file: path.join(designsDir, SPRITE) });
 
   return {
     dir: designsDir,
     designs,
     stylesheets: [...stylesheets.values()],
     scripts: [...scripts.values()],
+    icons: [...sprites.values()].map(({ used, ...entry }) => ({ ...entry, used: [...used].sort(byName) })),
     components,
     themes: findThemes(designsDir, scanned, hints)
   };
@@ -479,10 +519,10 @@ function signature({ tag, attributes: attrs, slots }) {
 export function formatCatalog(catalog, { name = catalog.dir } = {}) {
   const total = catalog.designs.length;
   const lines = [`${name}: ${total ? `${total} design${total === 1 ? '' : 's'}` : 'no designs yet'}.`];
-  if (catalog.stylesheets.length || catalog.scripts.length || catalog.components.length) {
+  if (catalog.stylesheets.length || catalog.scripts.length || catalog.icons.length || catalog.components.length) {
     lines[0] += ' Paths below are from this folder.';
   } else if (total) {
-    lines.push('', 'Nothing shared yet: no stylesheet, script or component.');
+    lines.push('', 'Nothing shared yet: no stylesheet, script, icon or component.');
   }
   if (catalog.themes) {
     const { attribute, values, byAttribute, scheme, from } = catalog.themes;
@@ -511,6 +551,19 @@ export function formatCatalog(catalog, { name = catalog.dir } = {}) {
     lines.push('', 'Scripts');
     for (const script of catalog.scripts) {
       lines.push(`  ${script.path}${script.missing ? ' (not found)' : ''} · ${describeUsers(script.users, total)}`);
+    }
+  }
+  if (catalog.icons.length) {
+    lines.push('', 'Icons (<svg class="icon"><use href="icons.svg#name"/></svg>; add more: htmlboard icons add <names>)');
+    for (const sprite of catalog.icons) {
+      const count = sprite.icons.length;
+      lines.push(`  ${sprite.path}${sprite.missing ? ' (not found)' : ` (${count} icon${count === 1 ? '' : 's'})`} · ${describeUsers(sprite.users, total, 'not used yet')}`);
+      if (count > MOST_ICONS) {
+        const used = sprite.used.filter((id) => sprite.icons.includes(id));
+        if (used.length) lines.push(...wrap(`    used (${used.length}):`, used));
+      } else if (count) {
+        lines.push(...wrap('   ', sprite.icons));
+      }
     }
   }
   if (catalog.components.length) {

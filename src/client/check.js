@@ -4,7 +4,8 @@
 //
 //   - what the probe noted while the page built (probe.js, which the server puts in framed pages):
 //     script errors, console.error, files that didn't load;
-//   - files the page asked for that aren't there (a stylesheet's fonts and images too);
+//   - files the page asked for that aren't there (a stylesheet's fonts and images too), and icons
+//     drawn from a sprite (<use href="icons.svg#name">) that it doesn't have;
 //   - components that weren't built, fonts that didn't load, a page that shows nothing;
 //   - layout: content cut at the frame's right edge, or below a frame of fixed height; text cut off
 //     by a box that hides what overflows it; text spilling out of its box;
@@ -100,7 +101,8 @@ export async function checkDesigns(designs, { theme = null, themes = null } = {}
     box.remove();
   }
   await findMissing(results);
-  return results.map(({ resources, found, ...result }) => result);
+  await findMissingIcons(results);
+  return results.map(({ resources, icons, found, ...result }) => result);
 }
 
 // A design in a theme, or in each of several, its problems in them merged
@@ -126,11 +128,12 @@ async function checkInThemes(design, box, { theme, themes }) {
 // Runs of one design in several themes as one result: a problem found in all of them once, the others
 // with the themes they were found in
 function merge(runs) {
-  const result = { ...runs[0][1], problems: [], resources: new Map(), themes: runs.map(([label]) => label) };
+  const result = { ...runs[0][1], problems: [], resources: new Map(), icons: new Map(), themes: runs.map(([label]) => label) };
   delete result.found;
   const seen = new Map(); // problem as JSON → { problem, labels }
   for (const [label, run] of runs) {
     for (const [file, code] of run.resources) if (code || !result.resources.has(file)) result.resources.set(file, code);
+    for (const [file, ids] of run.icons) if (!result.icons.has(file)) result.icons.set(file, ids);
     for (const problem of run.problems) {
       const key = JSON.stringify(problem);
       if (!seen.has(key)) seen.set(key, { problem, labels: [] });
@@ -147,7 +150,7 @@ function merge(runs) {
 async function checkDesign(design, box, { theme = null, find = null } = {}) {
   const result = {
     file: design.file, title: design.title, width: design.width, height: design.height || null,
-    problems: [], resources: new Map(),
+    problems: [], resources: new Map(), icons: new Map(),
   };
   let frame;
   try {
@@ -231,7 +234,7 @@ export function measurer(win, doc) {
   return { style, rect, hidden, keeps };
 }
 
-function readProblems(win, doc, design, { problems, resources }) {
+function readProblems(win, doc, design, { problems, resources, icons }) {
   const body = doc.body;
   const measures = measurer(win, doc);
   const { rect, hidden } = measures;
@@ -281,6 +284,28 @@ function readProblems(win, doc, design, { problems, resources }) {
   for (const entry of win.performance.getEntriesByType('resource')) {
     const { path } = where(entry.name);
     if (path && !path.startsWith('/__explorer/') && !path.startsWith('/api/')) resources.set(path, entry.responseStatus || 0);
+  }
+
+  // Icons drawn from a sprite: the names a sprite file doesn't have are asked once all the designs are
+  // checked (each sprite read once); one in the page itself, now
+  for (const use of doc.querySelectorAll('use')) {
+    const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
+    const hash = href.indexOf('#');
+    let id = href.slice(hash + 1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      // as it is
+    }
+    if (hash < 0 || !id) continue;
+    if (hash === 0) {
+      if (!doc.getElementById(id)) addCounted(problems, { level: 'error', kind: 'icon', id });
+      continue;
+    }
+    const { path } = where(new URL(href.slice(0, hash), doc.baseURI).href);
+    if (!path) continue; // another site's
+    if (!icons.has(path)) icons.set(path, new Map());
+    icons.get(path).set(id, (icons.get(path).get(id) || 0) + 1);
   }
 
   if (!body.innerText.trim() && ![...body.querySelectorAll('*')].some((el) => !hidden(el) && rect(el).width > 0 && rect(el).height > 0)) {
@@ -410,6 +435,33 @@ export function layoutProblems(win, doc, measures = measurer(win, doc)) {
     if (r.width > 0 && r.height > 0 && !hidden(media) && ![...ancestors(media, body)].some(keeps)) bottom = Math.max(bottom, r.bottom);
   }
   return { beyond, cut, spilled, bottom };
+}
+
+// Icons the pages draw from sprites that don't have them. Each sprite is read once, however many
+// designs use it; one that isn't there is a missing file.
+async function findMissingIcons(results) {
+  const sprites = new Map(); // path → the ids it has; null when it isn't there, undefined when it can't be told
+  for (const { icons } of results) for (const file of icons.keys()) sprites.set(file, undefined);
+  await Promise.all([...sprites.keys()].map(async (file) => {
+    try {
+      const res = await fetch(encodeURI(file), { cache: 'no-store' });
+      if (res.status === 404) sprites.set(file, null);
+      else if (res.ok) sprites.set(file, new Set([...(await res.text()).matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map((m) => m[1])));
+    } catch {
+      // Can't tell
+    }
+  }));
+  for (const { icons, problems } of results) {
+    for (const [file, ids] of icons) {
+      const has = sprites.get(file);
+      if (has === null) {
+        if (!problems.some((problem) => problem.kind === 'missing' && problem.path === file)) problems.push({ level: 'error', kind: 'missing', path: file, tag: 'use' });
+        continue;
+      }
+      if (!has) continue;
+      for (const [id, count] of ids) if (!has.has(id)) problems.push({ level: 'error', kind: 'icon', path: file, id, ...(count > 1 ? { count } : {}) });
+    }
+  }
 }
 
 // Colours as the page computes them, in any syntax (rgb(), oklch(), color(display-p3 …)), in sRGB:

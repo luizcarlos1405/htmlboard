@@ -40,7 +40,7 @@ export async function runCheck(target, { port, root, theme, themes } = {}) {
 
 const LEVELS = ['error', 'layout', 'note'];
 // The page as a whole first, then its scripts, its components and its files
-const KINDS = ['blank', 'timeout', 'check', 'script', 'console', 'component', 'missing', 'load', 'font', 'beyond', 'cut', 'spill', 'below', 'contrast'];
+const KINDS = ['blank', 'timeout', 'check', 'script', 'console', 'component', 'missing', 'icon', 'load', 'font', 'beyond', 'cut', 'spill', 'below', 'contrast'];
 
 /** Whether the report has something to fix (notes aside) */
 export const hasProblems = (report) => report.designs.some((design) => design.problems.some((problem) => problem.level !== 'note'));
@@ -107,6 +107,8 @@ function describe(problem, show) {
       if (problem.loader === false) return `<${problem.tag}> isn't built: the page doesn't load components.js`;
       if (problem.found === false) return `<${problem.tag}> isn't built: there is no ${file}`;
       return `<${problem.tag}> isn't built, though ${file || 'its file'} is there (see the errors)`;
+    case 'icon':
+      return `missing icon: ${problem.path ? `${show(problem.path)}#${problem.id}` : `#${problem.id}, in the page`} (<use>)${times}`;
     case 'blank':
       return 'the page shows nothing';
     case 'timeout':
